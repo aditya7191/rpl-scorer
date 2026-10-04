@@ -46,4 +46,6 @@ textarea{min-height:150px}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;z-index:30;display:none;max-width:90%}
 .err{color:#fca5a5;font-weight:700}
 .match{cursor:pointer}
+.del{background:#7f1d1d;color:#fff;font-size:15px;padding:10px}
+.danger{background:var(--red);color:#fff}
 .hide{display:none!important}

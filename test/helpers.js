@@ -11,4 +11,11 @@ async function dropSchema(schema) {
   await c.connect();
   try { await c.query('DROP SCHEMA IF EXISTS "' + schema + '" CASCADE'); } finally { await c.end(); }
 }
-module.exports = { usePg, testSchema, dropSchema };
+async function pgQuery(sql, params) {
+  const { pgConfig } = require('../storage.js');
+  const { Client } = require('pg');
+  const c = new Client(pgConfig(process.env.DATABASE_URL, process.env));
+  await c.connect();
+  try { return (await c.query(sql, params)).rows; } finally { await c.end(); }
+}
+module.exports = { usePg, testSchema, dropSchema, pgQuery };

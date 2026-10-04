@@ -30,12 +30,14 @@ const stopServer = () => new Promise(r => { srv.once('exit', r); srv.kill(); });
   const errs = []; for (const p of [pub, adm]) p.on('pageerror', e => errs.push(e.message));
 
   await pub.goto(URL + '/');
-  await pub.waitForSelector('text=No match yet');
+  await pub.waitForSelector('text=No live match');
   ok(true, 'public page loads, no match');
 
   // security: admin API refuses without login
   const r401 = await pub.evaluate(async () => (await fetch('/api/admin/undo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status);
   ok(r401 === 401, 'admin API blocked for viewer (401)');
+  const d401 = await pub.evaluate(async () => (await fetch('/api/admin/matches/x', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status);
+  ok(d401 === 401, 'delete API blocked for viewer (401)');
 
   await adm.goto(URL + '/admin');
   await adm.fill('#pw', 'wrong'); await adm.click('#loginBtn');
@@ -122,6 +124,46 @@ const stopServer = () => new Promise(r => { srv.once('exit', r); srv.kill(); });
   ok(true, 'public SSE reconnects after restart');
   await pub.click('[data-tab="past"]'); await pub.waitForSelector('[data-mid]');
   ok((await pub.textContent('#v-past')).includes('Lions 23/2 (2.0)'), 'past matches list');
+
+  // ---- delete matches (admin only) ----
+  await adm.reload(); await adm.waitForSelector('[data-act="momok"]');
+  await adm.click('[data-tab="new"]');
+  await adm.fill('#teamA', 'Eagles'); await adm.fill('#teamB', 'Hawks');
+  await adm.fill('#playersA', 'E1\nE2\nE3'); await adm.fill('#playersB', 'H1\nH2\nH3'); await adm.click('#createBtn');
+  await adm.waitForSelector('[data-act="openers"]');
+  const pubPast = (fn, arg) => pub.waitForFunction(fn, arg, { timeout: 5000 });
+  await pubPast(() => document.getElementById('v-past').innerText.includes('Eagles vs Hawks')); ok(true, 'public past list shows new match live');
+  ok(!(await pub.$('[data-del]')) && !(await pub.content()).includes('Delete match'), 'public page has no delete option');
+  const all = await (await fetch(URL + '/api/matches')).json();
+  const id1 = all.find(m => m.teamA === 'Lions').id, id2 = all.find(m => m.teamA === 'Eagles').id;
+  // viewer is looking at the old match's scorecard
+  await pub.click(`[data-mid="${id1}"]`); await pub.waitForFunction(() => document.getElementById('v-card').innerText.includes('Lions vs Tigers'));
+  await adm.click('[data-tab="past"]'); await adm.waitForSelector(`[data-del="${id1}"]`);
+  ok((await adm.$$('#v-past [data-del]')).length === 2, 'admin sees a Delete button for each match');
+  await adm.click(`[data-del="${id1}"]`); await adm.waitForSelector('#modal.on');
+  const msg = await adm.textContent('#sheet');
+  ok(msg.includes('Delete this match permanently?') && msg.includes('This cannot be undone') && msg.includes('Lions vs Tigers') && msg.includes('Lions 23/2'), 'confirm dialog shows simple warning + teams/score');
+  ok(!(await adm.isVisible('#v-card:not(.hide)')), 'tapping Delete does not open the scorecard');
+  await adm.screenshot({ path: path.join(__dirname, '..', 'screenshot-delete.png') });
+  await adm.click('[data-act="close"]');
+  ok((await (await fetch(URL + '/api/matches')).json()).length === 2, 'Cancel keeps the match');
+  await adm.click(`[data-del="${id1}"]`);
+  await Promise.all([adm.waitForResponse(r => r.url().includes('/api/admin/matches/') && r.request().method() === 'DELETE' && r.status() === 200), adm.click('[data-act="delok"]')]);
+  await adm.waitForFunction(() => document.querySelectorAll('#v-past [data-del]').length === 1); ok(true, 'admin list updates after delete');
+  await pub.waitForFunction(() => !document.getElementById('v-card').innerText.includes('Lions vs Tigers'), null, { timeout: 5000 });
+  ok(true, 'viewer looking at deleted match is moved off it immediately');
+  await pub.click('[data-tab="past"]');
+  await pubPast(() => { const t = document.getElementById('v-past').innerText; return !t.includes('Lions vs Tigers') && t.includes('Eagles vs Hawks'); });
+  ok(true, 'public past list drops deleted match');
+  // delete the current match from the Score tab
+  await pub.click('[data-tab="live"]'); await pubHas('Eagles vs Hawks');
+  await adm.click('[data-tab="score"]'); await adm.click(`#ctrl [data-del="${id2}"]`); await adm.waitForSelector('#modal.on');
+  ok((await adm.textContent('#sheet')).includes('This is the current match'), 'current-match delete warns that live score goes away');
+  await Promise.all([adm.waitForResponse(r => r.url().includes('/api/admin/matches/') && r.request().method() === 'DELETE' && r.status() === 200), adm.click('[data-act="delok"]')]);
+  await pubHas('No live match'); ok(true, 'public live view shows "No live match" right away');
+  await adm.waitForSelector('#board >> text=No live match'); ok((await adm.textContent('#ctrl')).includes('No match'), 'admin shows no match after deleting current');
+  await pub.click('[data-tab="past"]'); await pub.waitForSelector('#v-past >> text=No matches yet'); ok(true, 'public past list empty');
+  ok((await (await fetch(URL + '/api/live')).json()) === null, 'server has no current match');
   ok(errs.length === 0, 'no JS errors on pages ' + errs.join(';'));
   await browser.close(); await stopServer(); await H.dropSchema(schema);
   console.log('E2E TESTS PASSED:', pass);

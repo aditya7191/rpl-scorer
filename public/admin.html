@@ -34,10 +34,10 @@
 <script src="/engine.js"></script><script src="/ui.js"></script>
 <script>
 const $ = id => document.getElementById(id), esc = UI.esc;
-let st = null, tab = 'score', viewing = null, momPick = null, busy = false;
+let st = null, tab = 'score', viewing = null, momPick = null, busy = false, pastList = [];
 
-async function api(url, body) {
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+async function api(url, body, method) {
+  const r = await fetch(url, { method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && !url.endsWith('/login')) { showLogin(); throw new Error('Login needed'); }
   if (!r.ok) { if (j.state) { st = j.state; render(); } throw new Error(j.error || 'Error'); }
@@ -96,7 +96,7 @@ function controls() {
 }
 function render() {
   $('board').innerHTML = UI.live(st);
-  $('ctrl').innerHTML = controls();
+  $('ctrl').innerHTML = controls() + (st ? '<button class="big del" data-del="' + esc(st.id) + '">🗑️ Delete this match</button>' : '');
   $('v-card').innerHTML = (viewing ? '<button class="big sec" data-act="back">← Back to current match</button>' : '') + UI.scorecard(viewing || st);
 }
 function runsModal(title, kind, list) {
@@ -129,7 +129,9 @@ document.body.addEventListener('click', e => {
   if (d.how) return wicketDetail(d.how);
   if (d.mom) { momPick = d.mom; return render(); }
   if (d.mid) return;
+  if (d.del) return askDelete(d.del);
   switch (d.act) {
+    case 'delok': return doDelete(d.id);
     case 'undo': return undo();
     case 'close': return closeModal();
     case 'share': return UI.share(st);
@@ -147,9 +149,46 @@ document.body.addEventListener('click', e => {
     case 'momok': return api('/api/admin/mom', { key: momPick }).then(s => { st = s; render(); UI.toast('Man of the Match saved'); }).catch(err => UI.toast(err.message));
   }
 });
+// ---- delete match (admin only; the server checks the login too) ----
+function matchInfo(id) {
+  const m = pastList.find(x => x.id === id);
+  if (m) return { teams: m.teamA + ' vs ' + m.teamB, created: m.created, scores: m.scores, current: m.current };
+  const s = (st && st.id === id) ? st : (viewing && viewing.id === id) ? viewing : null;
+  if (!s) return null;
+  return { teams: s.setup.teamA + ' vs ' + s.setup.teamB, created: s.created,
+    scores: s.innings.filter(i => i.started).map(i => i.batTeam + ' ' + i.runs + '/' + i.wkts + ' (' + i.oversText + ')'), current: st && st.id === id };
+}
+function askDelete(id) {
+  const m = matchInfo(id);
+  if (!m) return UI.toast('Match not found');
+  openModal('<h2>Delete this match permanently?</h2>' +
+    '<div class="card" style="background:#0b1222"><b>' + esc(m.teams) + '</b><div class="mut">' + esc(UI.when(m.created)) + '</div>' +
+    m.scores.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' +
+    (m.current ? '<div class="err">This is the current match. The live score will go away for everyone watching.</div>' : '') +
+    '<div style="margin-top:8px">This cannot be undone. The full scorecard will be removed for everyone.</div>' +
+    '<button class="big danger" data-act="delok" data-id="' + esc(id) + '">Yes, delete this match</button>' +
+    '<button class="big sec" data-act="close">No, keep it</button>');
+}
+async function doDelete(id) {
+  if (busy) return; busy = true;
+  try {
+    const r = await api('/api/admin/matches/' + encodeURIComponent(id), {}, 'DELETE');
+    if (r.wasCurrent || (st && st.id === id)) { st = r.state; momPick = null; }
+    if (viewing && viewing.id === id) viewing = null;
+    closeModal(); render(); UI.toast('Match deleted');
+    if (tab === 'past') loadPast(); else if (tab === 'card' && !viewing && !st) show('past');
+  } catch (e) { closeModal(); UI.toast(e.message); if (tab === 'past') loadPast(); }
+  finally { busy = false; }
+}
+function loadPast() {
+  return fetch('/api/matches').then(r => r.json()).then(l => { pastList = l; $('v-past').innerHTML = UI.matchList(l, { admin: true }); });
+}
 $('v-past').addEventListener('click', async e => {
+  if (e.target.closest('[data-del]')) return;
   const c = e.target.closest('[data-mid]'); if (!c) return;
-  viewing = await (await fetch('/api/matches/' + encodeURIComponent(c.dataset.mid))).json();
+  const r = await fetch('/api/matches/' + encodeURIComponent(c.dataset.mid));
+  if (!r.ok) { UI.toast('This match is not available any more'); return loadPast(); }
+  viewing = await r.json();
   if (st && viewing.id === st.id) viewing = null;
   render(); show('card');
 });
@@ -157,7 +196,7 @@ function show(t) {
   tab = t;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   ['score', 'card', 'past', 'new'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
-  if (t === 'past') fetch('/api/matches').then(r => r.json()).then(l => $('v-past').innerHTML = UI.matchList(l));
+  if (t === 'past') loadPast();
   if (t === 'new') syncToss();
   window.scrollTo(0, 0);
 }
@@ -179,7 +218,9 @@ async function boot() {
   const me = await (await fetch('/api/admin/me')).json();
   if (!me.admin) return showLogin();
   $('login').classList.add('hide'); $('app').classList.remove('hide'); $('logout').classList.remove('hide');
-  UI.connect(s => { const prevId = st && st.id; st = s; if (!s || s.id !== prevId) momPick = null; if (!$('modal').classList.contains('on')) render(); });
+  UI.connect(s => { const prevId = st && st.id; st = s; if (!s || s.id !== prevId) momPick = null; if (!$('modal').classList.contains('on')) render(); if (tab === 'past') loadPast(); },
+    null,
+    id => { if (viewing && viewing.id === id) { viewing = null; render(); } });
   if (!st) { try { st = await (await fetch('/api/live')).json(); } catch (e) {} }
   render(); if (!st) show('new');
 }

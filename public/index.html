@@ -34,12 +34,20 @@ function show(t) {
 document.querySelector('.tabs').onclick = e => { if (e.target.dataset.tab) show(e.target.dataset.tab); };
 $('v-past').onclick = async e => {
   const c = e.target.closest('[data-mid]'); if (!c) return;
-  viewing = await (await fetch('/api/matches/' + encodeURIComponent(c.dataset.mid))).json();
+  const r = await fetch('/api/matches/' + encodeURIComponent(c.dataset.mid));
+  if (!r.ok) { UI.toast('This match is not available any more'); return loadPast(); }
+  viewing = await r.json();
   if (live && viewing.id === live.id) viewing = null;
   render(); show('card');
 };
 $('shareBtn').onclick = () => UI.share(tab === 'card' && viewing ? viewing : live);
 UI.connect(st => { live = st; render(); if (tab === 'past') loadPast(); },
-  ok => { $('conn').textContent = ok ? '● Connected' : 'Reconnecting...'; });
+  ok => { $('conn').textContent = ok ? '● Connected' : 'Reconnecting...'; },
+  id => {
+    // a match was deleted by the admin: drop it from whatever this viewer is looking at
+    if (viewing && viewing.id === id) { viewing = null; UI.toast('This match was deleted'); }
+    if (live && live.id === id) live = null;
+    render(); if (tab === 'past') loadPast();
+  });
 </script>
 </body></html>

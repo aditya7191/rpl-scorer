@@ -27,6 +27,34 @@ async function api(p, body) {
   const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
   return { status: r.status, body: await r.json() };
 }
+async function del(id, opts = {}) {
+  const headers = { cookie: opts.cookie === undefined ? cookie : opts.cookie };
+  if (opts.json !== false) headers['Content-Type'] = 'application/json';
+  const r = await fetch(URL + '/api/admin/matches/' + encodeURIComponent(id), { method: 'DELETE', headers, body: opts.json === false ? undefined : '{}' });
+  return { status: r.status, body: await r.json().catch(() => null) };
+}
+// Read SSE events from /api/stream until `until(events)` is true.
+async function sseCollect(trigger, until, ms = 5000) {
+  const ac = new AbortController(); const events = [];
+  const r = await fetch(URL + '/api/stream', { signal: ac.signal });
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  const timer = setTimeout(() => ac.abort(), ms);
+  let started = false;
+  try {
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = (chunk.match(/^event: (.*)$/m) || [])[1], data = (chunk.match(/^data: (.*)$/m) || [])[1];
+        if (ev) events.push({ ev, data: JSON.parse(data) });
+      }
+      if (!started && events.length) { started = true; events.length = 0; trigger(); }
+      if (started && until(events)) break;
+    }
+  } catch (e) { if (e.name !== 'AbortError') throw e; } finally { clearTimeout(timer); ac.abort(); }
+  return events;
+}
 
 (async () => {
   console.log('Restart test storage:', H.usePg ? 'postgres (schema ' + schema + ')' : 'json file');
@@ -62,6 +90,42 @@ async function api(p, body) {
   await hardKill(); await start();
   const after = (await api('/api/live')).body;
   ok(after.innings[0].runs === 7 + 10 && JSON.stringify(after) === JSON.stringify(before), 'parallel taps all saved (17 runs, 4 parallel) and survive restart');
+  // ---- delete match ----
+  const m1id = list[1].id, m2id = list[0].id;
+  ok((await del(m1id, { cookie: '' })).status === 401, 'delete without login rejected (401)');
+  ok((await del(m1id, { cookie: 'rpl_admin=123.abc' })).status === 401, 'delete with forged cookie rejected (401)');
+  ok((await del(m1id, { json: false })).status === 415, 'delete without JSON content type rejected (415, CSRF guard)');
+  ok((await api('/api/matches')).body.length === 2, 'rejected deletes changed nothing');
+  ok((await del('no-such-match')).status === 404, 'delete unknown match -> 404');
+  let dres, dp;
+  const ev1 = await sseCollect(() => { dp = del(m1id); }, evs => evs.some(e => e.ev === 'update'));
+  dres = await dp;
+  ok(dres && dres.status === 200 && dres.body.ok && dres.body.wasCurrent === false, 'admin deletes past match 1');
+  ok(ev1[0].ev === 'deleted' && ev1[0].data.id === m1id && ev1[1].ev === 'update' && ev1[1].data.id === m2id, 'SSE broadcasts deleted(match 1) then live state (match 2 still live)');
+  ok((await api('/api/matches/' + m1id)).status === 404, 'deleted match no longer readable');
+  await hardKill(); await start();
+  let l2 = (await api('/api/matches')).body;
+  ok(l2.length === 1 && l2[0].id === m2id && l2[0].current, 'past-match delete survives SIGKILL restart; current match kept');
+  ok((await del(m1id)).status === 404, 'deleting again -> 404');
+  const ev2 = await sseCollect(() => { dp = del(m2id); }, evs => evs.some(e => e.ev === 'update'));
+  dres = await dp;
+  ok(dres.status === 200 && dres.body.wasCurrent === true && dres.body.state === null, 'admin deletes current match');
+  ok(ev2.some(e => e.ev === 'deleted' && e.data.id === m2id) && ev2.find(e => e.ev === 'update').data === null, 'SSE sends live state null after current match deleted');
+  ok((await api('/api/live')).body === null && (await api('/api/matches')).body.length === 0, 'no live match, list empty');
+  ok((await api('/api/admin/event', { event: { t: 'ball', kind: 'run', runs: 1 } })).status === 400, 'scoring after delete says no match');
+  await hardKill(); await start();
+  ok((await api('/api/live')).body === null && (await api('/api/matches')).body.length === 0, 'current-match delete (and cleared current id) survives restart');
+  if (H.usePg) {
+    const rows = await H.pgQuery(`SELECT (SELECT count(*)::int FROM "${schema}".rpl_matches) AS n, (SELECT value FROM "${schema}".rpl_meta WHERE key = 'currentId') AS cur`);
+    ok(rows[0].n === 0 && rows[0].cur === null, 'Postgres: match rows deleted and currentId cleared');
+  } else {
+    const j = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
+    ok(j.matches.length === 0 && j.currentId === null, 'JSON file: matches deleted and currentId cleared');
+  }
+  const m3 = await api('/api/admin/match', { setup: { ...setup, teamA: 'Hawks' } });
+  ok(m3.status === 200 && (await api('/api/live')).body.setup.teamA === 'Hawks', 'new match can be started after delete');
+  await hardKill(); await start();
+  ok((await api('/api/live')).body.setup.teamA === 'Hawks' && (await api('/api/matches')).body.length === 1, 'new match after delete survives restart');
   // without SESSION_SECRET, cookie is derived from password: still survives restarts
   await hardKill(); await start({ SESSION_SECRET: '' }); cookie = '';
   await api('/api/admin/login', { password: PW });

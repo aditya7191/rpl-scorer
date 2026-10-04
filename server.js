@@ -27,13 +27,15 @@ const current = () => (db.currentId ? findMatch(db.currentId) : null);
 let queue = Promise.resolve();
 function serialized(fn) { const p = queue.then(fn, fn); queue = p.catch(() => {}); return p; }
 // Apply a change to copies, persist, then swap into memory. If the write fails nothing changes.
-async function commit(changedMatches, currentId) {
+async function commit(changedMatches, currentId, deletedIds = []) {
   const byId = new Map(changedMatches.map(m => [m.id, m]));
-  const matches = db.matches.map(m => byId.get(m.id) || m);
+  const gone = new Set(deletedIds);
+  const matches = db.matches.filter(m => !gone.has(m.id)).map(m => byId.get(m.id) || m);
   for (const m of changedMatches) if (!db.matches.some(x => x.id === m.id)) matches.push(m);
   const next = { currentId: currentId === undefined ? db.currentId : currentId, matches };
-  await store.commit(next, changedMatches);
+  await store.commit(next, changedMatches, deletedIds);
   db = next;
+  for (const id of deletedIds) broadcastEvent('deleted', { id });
   broadcast();
 }
 const clone = (m) => JSON.parse(JSON.stringify(m));
@@ -68,10 +70,11 @@ function requireAdmin(req, res, next) {
 // ---------- live updates (SSE) ----------
 const clients = new Set();
 function liveState() { const m = current(); return m ? E.compute(m) : null; }
-function broadcast() {
-  const data = 'event: update\ndata: ' + JSON.stringify(liveState()) + '\n\n';
+function broadcastEvent(name, payload) {
+  const data = 'event: ' + name + '\ndata: ' + JSON.stringify(payload) + '\n\n';
   for (const res of clients) res.write(data);
 }
+const broadcast = () => broadcastEvent('update', liveState());
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
 
 // ---------- app ----------
@@ -170,6 +173,14 @@ app.post('/api/admin/mom', requireAdmin, adminRoute(async (req, res) => {
   const n = clone(m); n.mom = { key: p.key, name: p.name, team: p.team, teamName: p.teamName, pts: p.pts };
   await commit([n]);
   res.json(E.compute(n));
+}));
+// Delete a match permanently (any match, including the current one). Admin only.
+app.delete('/api/admin/matches/:id', requireAdmin, adminRoute(async (req, res) => {
+  const m = findMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Match not found. It may be already deleted.' });
+  const wasCurrent = m.id === db.currentId;
+  await commit([], wasCurrent ? null : undefined, [m.id]);
+  res.json({ ok: true, id: m.id, wasCurrent, state: liveState() });
 }));
 
 function sanitizeEvent(ev) {

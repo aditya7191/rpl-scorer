@@ -3,7 +3,8 @@
 //   - Postgres (when DATABASE_URL is set): one row per match (full event log + setup + MoM as JSONB),
 //     plus a tiny meta table holding the current match id. Tables are created on startup.
 //   - JSON file (fallback for local dev/tests): data/db.json, written atomically with fsync.
-// commit() resolves only after the data is durably stored, so the server replies after the write.
+// commit(next, changed, deletedIds) resolves only after the data is durably stored, so the server
+// replies after the write. deletedIds (optional) lists match ids to remove permanently.
 const fs = require('fs');
 const path = require('path');
 
@@ -19,7 +20,7 @@ function jsonStore(dataDir) {
         return { currentId: null, matches: [] };
       }
     },
-    async commit(next /*, changed */) {
+    async commit(next /*, changed, deletedIds */) {
       const tmp = file + '.tmp';
       const fd = fs.openSync(tmp, 'w');
       try { fs.writeSync(fd, JSON.stringify(next)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -92,11 +93,12 @@ function pgStore(url, env) {
         } finally { c.release(); }
       });
     },
-    async commit(next, changed) {
+    async commit(next, changed, deletedIds = []) {
       return withRetry(async () => {
         const c = await pool.connect();
         try {
           await c.query('BEGIN');
+          if (deletedIds.length) await c.query(`DELETE FROM ${T('rpl_matches')} WHERE id = ANY($1::text[])`, [deletedIds]);
           for (const m of changed) {
             await c.query(`INSERT INTO ${T('rpl_matches')} (id, created, data, updated_at) VALUES ($1, $2, $3, now())
               ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`, [m.id, m.created, JSON.stringify(m)]);
