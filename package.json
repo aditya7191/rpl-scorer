@@ -1,0 +1,27 @@
+{
+  "name": "rpl-scorer",
+  "version": "1.0.0",
+  "description": "RPL Scorer - Rohidas Premier League live cricket scoring",
+  "main": "server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/engine.test.js && node test/restart.test.js && node test/e2e.test.js",
+    "import-json": "node scripts/import-json.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.22.3",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

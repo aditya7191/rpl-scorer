@@ -1,0 +1,68 @@
+// Engine unit tests: node test/engine.test.js
+const E = require('../public/engine.js');
+const assert = require('assert');
+let pass = 0; const ok = (c, m) => { assert.ok(c, m); pass++; };
+const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m + ' (got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b) + ')'); pass++; };
+const setup = { teamA: 'Lions', teamB: 'Tigers', playersA: ['A1', 'A2', 'A3', 'A4'], playersB: ['B1', 'B2', 'B3', 'B4'], overs: 2, tossWinner: 'A', tossChoice: 'bat' };
+const m = { id: 't', created: new Date().toISOString(), setup, events: [] };
+const push = (ev) => { const st = E.compute(m); const err = E.apply(st, ev); if (err) throw new Error(err + ' ' + JSON.stringify(ev)); m.events.push(ev); return E.compute(m); };
+const reject = (ev) => { const st = E.compute(m); const err = E.apply(st, ev); ok(!!err, 'should reject ' + JSON.stringify(ev)); };
+const B = (kind, runs, wkt) => ({ t: 'ball', kind, runs, wkt });
+
+eq(E.normalizeSetup({}).overs, 4, 'default overs 4');
+eq(E.normalizeSetup({}).wideRuns, 1, 'default wide 1');
+let st = E.compute(m); eq(st.need, 'openers', 'need openers');
+reject(B('run', 1));
+st = push({ t: 'openers', striker: 'A1', nonStriker: 'A2', bowler: 'B1' });
+st = push(B('run', 1)); eq(st.innings[0].striker, 'A2', 'odd run rotates');
+st = push(B('wide', 0)); eq([st.innings[0].runs, st.innings[0].legal], [2, 1], 'wide +1 not legal');
+st = push(B('run', 4));
+st = push(B('nb', 2)); eq([st.innings[0].runs, st.innings[0].legal, st.innings[0].striker], [9, 2, 'A2'], 'nb+2');
+eq([st.innings[0].batters.A2.r, st.innings[0].batters.A2.b, st.innings[0].batters.A2.f4], [6, 2, 1], 'A2 stats');
+st = push(B('wicket', 0, { how: 'bowled', out: 'striker' })); eq(st.need, 'batsman', 'need batsman');
+reject({ t: 'batsman', name: 'A2' });
+st = push({ t: 'batsman', name: 'A3' }); eq(st.innings[0].striker, 'A3', 'new bat on strike');
+st = push(B('run', 0));
+st = push(B('bye', 1)); eq(st.innings[0].striker, 'A1', 'bye rotates');
+st = push(B('run', 2));
+let i = st.innings[0];
+eq([i.runs, i.wkts, i.oversText, i.striker, st.need], [12, 1, '1.0', 'A3', 'bowler'], 'end over 1');
+eq([i.bowlers.B1.r, i.bowlers.B1.w, i.bowlers.B1.balls], [11, 1, 6], 'B1 figures');
+eq(i.extras, { wd: 1, nb: 1, b: 1, lb: 0 }, 'extras');
+reject({ t: 'bowler', name: 'B1' });
+st = push({ t: 'bowler', name: 'B2' });
+st = push(B('run', 6)); eq(st.innings[0].runs, 18, 'six');
+m.events.pop(); st = E.compute(m); eq([st.innings[0].runs, st.innings[0].batters.A3.s6, st.innings[0].legal], [12, 0, 6], 'undo six');
+st = push(B('run', 1)); eq(st.innings[0].striker, 'A1', 'A1 strike');
+st = push(B('wicket', 1, { how: 'runout', out: 'nonStriker', fielder: 'B3' }));
+i = st.innings[0];
+eq([i.runs, i.wkts, i.striker, i.nonStriker, i.batters.A3.how, i.batters.A1.r, i.bowlers.B2.w], [14, 2, null, 'A1', 'run out (B3)', 4, 0], 'run out non-striker after 1 run');
+st = push({ t: 'batsman', name: 'A4' });
+st = push(B('lb', 2)); st = push(B('wide', 2)); eq([st.innings[0].runs, st.innings[0].extras.wd, st.innings[0].legal], [19, 4, 9], 'lb2 + wide+2');
+st = push(B('run', 3)); st = push(B('run', 0)); st = push(B('run', 1));
+i = st.innings[0];
+eq([i.runs, i.wkts, i.oversText, i.done, st.cur, st.innings[1].target, st.need], [23, 2, '2.0', true, 1, 24, 'openers'], 'innings 1 done');
+eq(i.fow.map(f => f.score + '-' + f.n + '@' + f.over), ['9-1@0.3', '14-2@1.2'], 'FOW');
+st = push({ t: 'openers', striker: 'B1', nonStriker: 'B2', bowler: 'A1' });
+for (const r of [6, 6, 6, 4]) st = push(B('run', r));
+eq([st.chase.need, st.chase.ballsLeft, st.chase.rrr], [2, 8, '1.50'], 'chase req');
+st = push(B('wide', 0)); st = push(B('run', 1));
+eq([st.need, st.result.text, st.innings[1].runs, st.innings[1].oversText], ['done', 'Tigers won by 3 wickets', 24, '0.5'], 'result');
+reject(B('run', 1));
+eq(st.momSuggest[0].name, 'B1', 'MoM top B1');
+console.log('MoM:', st.momSuggest.slice(0, 3).map(p => p.name + ' ' + p.pts + ' [' + p.parts.join(', ') + ']').join('\n     '));
+
+// tie + won by runs + all out
+function play(evs, s2) { const mm = { setup: Object.assign({}, setup, s2), events: [] }; for (const e of evs) { const st = E.compute(mm); const err = E.apply(st, e); if (err) throw new Error(err); mm.events.push(e); } return E.compute(mm); }
+const one = { overs: 1 };
+const op1 = { t: 'openers', striker: 'A1', nonStriker: 'A2', bowler: 'B1' }, op2 = { t: 'openers', striker: 'B1', nonStriker: 'B2', bowler: 'A1' };
+const six = (r) => Array(6).fill(0).map(() => B('run', r));
+let t = play([op1, ...six(2), op2, ...six(2)], one); eq(t.result.text, 'Match tied', 'tie');
+t = play([op1, ...six(2), op2, ...six(1)], one); eq(t.result.text, 'Lions won by 6 runs', 'won by runs');
+const W = B('wicket', 0, { how: 'caught', fielder: 'B4' });
+t = play([op1, W, { t: 'batsman', name: 'A3' }, W, { t: 'batsman', name: 'A4' }, W], one);
+eq([t.innings[0].done, t.innings[0].endReason, t.cur, t.innings[0].batters.A1.how], [true, 'all out', 1, 'c B4 b B1'], 'all out');
+t = play([op1, ...six(0)], { overs: 2, maxOversPerBowler: 1 }); ok(!t.availBowlers.includes('B1'), 'max overs');
+eq(t.innings[0].bowlers.B1.m, 1, 'maiden');
+console.log(E.summaryText(st).split('\n').slice(0, 4).join(' | '));
+console.log('ENGINE TESTS PASSED:', pass);

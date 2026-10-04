@@ -1,0 +1,20 @@
+# Render Blueprint: free web service. Data lives in Neon Postgres (Render's free disk is wiped on restart).
+services:
+  - type: web
+    name: rpl-scorer
+    runtime: node
+    plan: free
+    region: singapore          # closest Render region to India; create the Neon DB in AWS Singapore too
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL       # Neon connection string (postgresql://...?sslmode=require)
+        sync: false
+      - key: RPL_ADMIN_PASSWORD # admin login password
+        sync: false
+      - key: SESSION_SECRET     # long random string; keeps admin logged in across restarts/deploys
+        sync: false
