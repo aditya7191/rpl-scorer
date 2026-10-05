@@ -91,6 +91,8 @@ const reg = createRegistration({ store, isAdmin: (req) => isAdmin(req), requireA
 reg.mount(app);
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/score', (req, res) => res.sendFile(path.join(__dirname, 'public', 'score.html')));
+app.get('/score/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'score-admin.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: 0 }));
 
 app.get('/healthz', async (req, res) => {
@@ -212,7 +214,7 @@ store.init().then(async (loaded) => {
   db = { currentId: loaded.currentId || null, matches: Array.isArray(loaded.matches) ? loaded.matches : [] };
   const r = await reg.load();
   console.log('Storage: ' + store.describe() + ' - ' + db.matches.length + ' match(es), ' + r.teams.length + ' registered team(s) loaded');
-  server = app.listen(PORT, () => console.log('RPL Scorer running on http://localhost:' + PORT + '  (admin: /admin)'));
+  server = app.listen(PORT, () => console.log('RPL running on http://localhost:' + PORT + '  (reg admin: /admin, scorer: /score, score admin: /score/admin)'));
 }).catch((e) => { console.error('ERROR: storage init failed:', e.message || e.code || String(e)); process.exit(1); });
 
 function shutdown(sig) {

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>RPL Scorer - Admin</title><meta name="theme-color" content="#f59e0b">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="/score/admin"><img src="/logo-128.png" alt="RPL logo" width="42" height="42"><h1>RPL Scorer Admin<small>Rohidas Premier League · Scoring</small></h1></a><button id="logout" class="pill hide" style="border:0">Logout</button></header>
+<div class="wrap">
+  <div id="login" class="card hide">
+    <h2>Admin login</h2>
+    <label>Password</label><input id="pw" type="password" autocomplete="current-password">
+    <button class="big" id="loginBtn">Login</button><div id="loginErr" class="err"></div>
+    <div class="mut" style="margin-top:10px">Only viewing score? <a href="/score" style="color:var(--acc)">Open live score</a></div>
+  </div>
+  <div id="app" class="hide">
+    <div class="tabs"><button data-tab="score" class="on">Score</button><button data-tab="card">Card</button><button data-tab="past">Matches</button><button data-tab="new">New</button></div>
+    <div id="v-score"><div id="board"></div><div id="ctrl"></div></div>
+    <div id="v-card" class="hide"></div>
+    <div id="v-past" class="hide"></div>
+    <div id="v-new" class="hide">
+      <div class="card">
+        <h2>New Match Setup</h2>
+        <div id="regPick" class="hide"><div class="mut">Load a registered team (fills name + Playing XI):</div>
+          <div class="two"><div><label>Team A from registrations</label><select id="pickA"></select></div><div><label>Team B from registrations</label><select id="pickB"></select></div></div></div>
+        <div class="two"><div><label>Team A name</label><input id="teamA" value="Team A"></div><div><label>Team B name</label><input id="teamB" value="Team B"></div></div>
+        <div class="two"><div><label>Team A players (one per line)</label><textarea id="playersA"></textarea></div><div><label>Team B players (one per line)</label><textarea id="playersB"></textarea></div></div>
+        <div class="two"><div><label>Overs per innings</label><input id="overs" type="number" min="1" max="50" value="4" inputmode="numeric"></div><div><label>Max overs per bowler (0 = no limit)</label><input id="maxOv" type="number" min="0" value="0" inputmode="numeric"></div></div>
+        <div class="two"><div><label>Toss won by</label><select id="tossWinner"><option value="A">Team A</option><option value="B">Team B</option></select></div><div><label>Toss winner chose to</label><select id="tossChoice"><option value="bat">Bat</option><option value="bowl">Bowl</option></select></div></div>
+        <div class="two"><div><label>Wide = extra runs</label><input id="wideRuns" type="number" min="0" value="1" inputmode="numeric"></div><div><label>No Ball = extra runs</label><input id="nbRuns" type="number" min="0" value="1" inputmode="numeric"></div></div>
+        <label>Ground / venue (optional)</label><input id="venue">
+        <button class="big" id="createBtn">✅ Start New Match</button><div id="newErr" class="err"></div>
+      </div>
+    </div>
+  </div>
+  <div class="credit">Developed by Aditya Solanki (Dipesh)</div>
+</div>
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+<script src="/engine.js"></script><script src="/ui.js"></script>
+<script>
+const $ = id => document.getElementById(id), esc = UI.esc;
+let st = null, tab = 'score', viewing = null, momPick = null, busy = false, pastList = [];
+
+async function api(url, body, method) {
+  const r = await fetch(url, { method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && !url.endsWith('/login')) { showLogin(); throw new Error('Login needed'); }
+  if (!r.ok) { if (j.state) { st = j.state; render(); } throw new Error(j.error || 'Error'); }
+  return j;
+}
+async function send(event) {
+  if (busy) return; busy = true;
+  try { st = await api('/api/admin/event', { event, expect: st.eventCount }); closeModal(); render(); }
+  catch (e) { UI.toast(e.message); } finally { busy = false; }
+}
+async function undo() {
+  if (busy || !st || !st.eventCount) return; busy = true;
+  try { st = await api('/api/admin/undo', { expect: st.eventCount }); closeModal(); render(); UI.toast('Undo done'); }
+  catch (e) { UI.toast(e.message); } finally { busy = false; }
+}
+function openModal(html) { $('sheet').innerHTML = html; $('modal').classList.add('on'); }
+function closeModal() { $('modal').classList.remove('on'); }
+$('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
+
+const undoBtn = () => st && st.eventCount ? '<button class="big sec" data-act="undo">↩️ Undo last action</button>' : '';
+const opts = (list, sel) => list.map(p => '<option' + (p === sel ? ' selected' : '') + '>' + esc(p) + '</option>').join('');
+
+function controls() {
+  if (!st) return '<div class="card">No match. Go to <b>New Match</b> tab.</div>';
+  const inn = st.innings[st.cur];
+  if (st.need === 'openers') {
+    return '<div class="card"><h2>' + (st.cur === 0 ? '1st' : '2nd') + ' innings: ' + esc(inn.batTeam) + ' batting</h2>' +
+      '<label>Striker (on strike)</label><select id="opS">' + opts(inn.players, inn.players[0]) + '</select>' +
+      '<label>Non-striker</label><select id="opN">' + opts(inn.players, inn.players[1]) + '</select>' +
+      '<label>Opening bowler (' + esc(inn.bowlTeam) + ')</label><select id="opB">' + opts(inn.bowlPlayers) + '</select>' +
+      '<button class="big" data-act="openers">▶️ Start innings</button></div>' + undoBtn();
+  }
+  if (st.need === 'batsman') {
+    return '<div class="card"><h2>Wicket! Pick new batsman</h2>' + st.availBatters.map(p => '<button class="opt" data-bat="' + esc(p) + '">' + esc(p) + '</button>').join('') + '</div>' + undoBtn();
+  }
+  if (st.need === 'bowler') {
+    return '<div class="card"><h2>Over complete. Pick next bowler</h2><div class="mut">' + esc(inn.lastOverBowler || '') + ' bowled last over, cannot bowl again now.</div><br>' +
+      (st.availBowlers.length ? st.availBowlers.map(p => { const b = inn.bowlers[p]; return '<button class="opt" data-bowl="' + esc(p) + '">' + esc(p) + (b ? ' <span class="mut">(' + b.oversText + '-' + b.m + '-' + b.r + '-' + b.w + ')</span>' : '') + '</button>'; }).join('') : '<div class="err">No bowler available (check max overs setting).</div>') + '</div>' + undoBtn();
+  }
+  if (st.need === 'ball') {
+    return '<div class="card"><div class="grid">' +
+      [0, 1, 2, 3].map(r => '<button class="btn" data-run="' + r + '">' + r + '</button>').join('') +
+      '<button class="btn b4" data-run="4">4</button><button class="btn b6" data-run="6">6</button>' +
+      '<button class="btn bx" data-act="wide">Wide</button><button class="btn bx" data-act="nb">No Ball</button>' +
+      '<button class="btn bx" data-act="bye">Bye</button><button class="btn bx" data-act="lb">Leg Bye</button>' +
+      '<button class="btn bw" data-act="wicket" style="grid-column:span 2">OUT</button>' +
+      '</div>' + undoBtn().replace('big sec', 'big sec') + '<button class="big sec" data-act="share">📤 Share score</button></div>';
+  }
+  const list = st.momSuggest || [];
+  if (!momPick) momPick = st.mom ? st.mom.key : (list[0] && list[0].key);
+  return '<div class="card"><h2>Man of the Match</h2><div class="mut">Suggested by points. Tap a player, then confirm.</div><br>' +
+    list.slice(0, 8).map(p => '<button class="opt' + (p.key === momPick ? ' on' : '') + '" data-mom="' + esc(p.key) + '">' + esc(p.name) + ' <small>(' + esc(p.teamName) + ')</small> — ' + p.pts + ' pts<br><small style="font-weight:400">' + p.parts.map(esc).join(', ') + '</small></button>').join('') +
+    '<button class="big" data-act="momok">⭐ Confirm Man of the Match</button>' + (st.mom ? '<div class="mom">Saved: ' + esc(st.mom.name) + '</div>' : '') + '</div>' +
+    '<button class="big sec" data-act="share">📤 Share scorecard</button>' + undoBtn() + '<button class="big sec" data-tab2="new">➕ New Match</button>';
+}
+function render() {
+  $('board').innerHTML = UI.live(st);
+  $('ctrl').innerHTML = controls() + (st ? '<button class="big del" data-del="' + esc(st.id) + '">🗑️ Delete this match</button>' : '');
+  $('v-card').innerHTML = (viewing ? '<button class="big sec" data-act="back">← Back to current match</button>' : '') + UI.scorecard(viewing || st);
+}
+function runsModal(title, kind, list) {
+  openModal('<h2>' + title + '</h2><div class="grid">' + list.map(r => '<button class="btn" data-mk="' + kind + '" data-mr="' + r + '">' + r + '</button>').join('') + '</div><button class="big sec" data-act="close">Cancel</button>');
+}
+function wicketModal() {
+  const types = [['bowled', 'Bowled'], ['caught', 'Caught'], ['lbw', 'LBW'], ['runout', 'Run Out'], ['stumped', 'Stumped'], ['hitwicket', 'Hit Wicket']];
+  openModal('<h2>How out?</h2>' + types.map(t => '<button class="opt" data-how="' + t[0] + '">' + t[1] + '</button>').join('') + '<button class="big sec" data-act="close">Cancel</button>');
+}
+function wicketDetail(how) {
+  const inn = st.innings[st.cur];
+  const fsel = '<label>Fielder (' + esc(inn.bowlTeam) + ', optional)</label><select id="wF"><option value="">- not known -</option>' + opts(inn.bowlPlayers) + '</select>';
+  if (how === 'caught' || how === 'stumped') {
+    openModal('<h2>' + (how === 'caught' ? 'Caught' : 'Stumped') + ' – ' + esc(inn.striker) + '</h2>' + fsel + '<button class="big" data-act="wok" data-h="' + how + '">OK, OUT</button><button class="big sec" data-act="close">Cancel</button>');
+  } else if (how === 'runout') {
+    openModal('<h2>Run Out</h2><label>Who is out?</label><select id="wWho"><option value="striker">' + esc(inn.striker) + ' (striker)</option><option value="nonStriker">' + esc(inn.nonStriker) + ' (non-striker)</option></select>' +
+      '<label>Runs completed before run out</label><select id="wR"><option>0</option><option>1</option><option>2</option><option>3</option></select>' + fsel +
+      '<button class="big" data-act="wok" data-h="runout">OK, OUT</button><button class="big sec" data-act="close">Cancel</button>');
+  } else send({ t: 'ball', kind: 'wicket', runs: 0, wkt: { how, out: 'striker' } });
+}
+document.body.addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  const d = t.dataset;
+  if (d.tab) return show(d.tab);
+  if (d.tab2) return show(d.tab2);
+  if (d.run !== undefined) return send({ t: 'ball', kind: 'run', runs: +d.run });
+  if (d.bat) return send({ t: 'batsman', name: d.bat });
+  if (d.bowl) return send({ t: 'bowler', name: d.bowl });
+  if (d.mk) return send({ t: 'ball', kind: d.mk, runs: +d.mr });
+  if (d.how) return wicketDetail(d.how);
+  if (d.mom) { momPick = d.mom; return render(); }
+  if (d.mid) return;
+  if (d.del) return askDelete(d.del);
+  switch (d.act) {
+    case 'delok': return doDelete(d.id);
+    case 'undo': return undo();
+    case 'close': return closeModal();
+    case 'share': return UI.share(st);
+    case 'back': viewing = null; return render();
+    case 'wide': return runsModal('Wide + runs taken?', 'wide', [0, 1, 2, 3, 4]);
+    case 'nb': return runsModal('No Ball – runs off bat?', 'nb', [0, 1, 2, 3, 4, 6]);
+    case 'bye': return runsModal('Bye – runs?', 'bye', [1, 2, 3, 4]);
+    case 'lb': return runsModal('Leg Bye – runs?', 'lb', [1, 2, 3, 4]);
+    case 'wicket': return wicketModal();
+    case 'openers': return send({ t: 'openers', striker: $('opS').value, nonStriker: $('opN').value, bowler: $('opB').value });
+    case 'wok': {
+      const how = d.h, w = { how, out: how === 'runout' ? $('wWho').value : 'striker', fielder: $('wF').value };
+      return send({ t: 'ball', kind: 'wicket', runs: how === 'runout' ? +$('wR').value : 0, wkt: w });
+    }
+    case 'momok': return api('/api/admin/mom', { key: momPick }).then(s => { st = s; render(); UI.toast('Man of the Match saved'); }).catch(err => UI.toast(err.message));
+  }
+});
+function matchInfo(id) {
+  const m = pastList.find(x => x.id === id);
+  if (m) return { teams: m.teamA + ' vs ' + m.teamB, created: m.created, scores: m.scores, current: m.current };
+  const s = (st && st.id === id) ? st : (viewing && viewing.id === id) ? viewing : null;
+  if (!s) return null;
+  return { teams: s.setup.teamA + ' vs ' + s.setup.teamB, created: s.created,
+    scores: s.innings.filter(i => i.started).map(i => i.batTeam + ' ' + i.runs + '/' + i.wkts + ' (' + i.oversText + ')'), current: st && st.id === id };
+}
+function askDelete(id) {
+  const m = matchInfo(id);
+  if (!m) return UI.toast('Match not found');
+  openModal('<h2>Delete this match permanently?</h2>' +
+    '<div class="card" style="background:#0b1222"><b>' + esc(m.teams) + '</b><div class="mut">' + esc(UI.when(m.created)) + '</div>' +
+    m.scores.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' +
+    (m.current ? '<div class="err">This is the current match. The live score will go away for everyone watching.</div>' : '') +
+    '<div style="margin-top:8px">This cannot be undone. The full scorecard will be removed for everyone.</div>' +
+    '<button class="big danger" data-act="delok" data-id="' + esc(id) + '">Yes, delete this match</button>' +
+    '<button class="big sec" data-act="close">No, keep it</button>');
+}
+async function doDelete(id) {
+  if (busy) return; busy = true;
+  try {
+    const r = await api('/api/admin/matches/' + encodeURIComponent(id), {}, 'DELETE');
+    if (r.wasCurrent || (st && st.id === id)) { st = r.state; momPick = null; }
+    if (viewing && viewing.id === id) viewing = null;
+    closeModal(); render(); UI.toast('Match deleted');
+    if (tab === 'past') loadPast(); else if (tab === 'card' && !viewing && !st) show('past');
+  } catch (e) { closeModal(); UI.toast(e.message); if (tab === 'past') loadPast(); }
+  finally { busy = false; }
+}
+function loadPast() {
+  return fetch('/api/matches').then(r => r.json()).then(l => { pastList = l; $('v-past').innerHTML = UI.matchList(l, { admin: true }); });
+}
+$('v-past').addEventListener('click', async e => {
+  if (e.target.closest('[data-del]')) return;
+  const c = e.target.closest('[data-mid]'); if (!c) return;
+  const r = await fetch('/api/matches/' + encodeURIComponent(c.dataset.mid));
+  if (!r.ok) { UI.toast('This match is not available any more'); return loadPast(); }
+  viewing = await r.json();
+  if (st && viewing.id === st.id) viewing = null;
+  render(); show('card');
+});
+function show(t) {
+  tab = t;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  ['score', 'card', 'past', 'new'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
+  if (t === 'past') loadPast();
+  if (t === 'new') { syncToss(); loadPicks(); }
+  window.scrollTo(0, 0);
+}
+function syncToss() { const s = $('tossWinner'); s.options[0].text = $('teamA').value || 'Team A'; s.options[1].text = $('teamB').value || 'Team B'; }
+$('teamA').oninput = $('teamB').oninput = syncToss;
+$('createBtn').onclick = async () => {
+  $('newErr').textContent = '';
+  const lines = id => $(id).value.split('\n').map(x => x.trim()).filter(Boolean);
+  const setup = { teamA: $('teamA').value, teamB: $('teamB').value, playersA: lines('playersA'), playersB: lines('playersB'), overs: $('overs').value,
+    maxOversPerBowler: $('maxOv').value, tossWinner: $('tossWinner').value, tossChoice: $('tossChoice').value, wideRuns: $('wideRuns').value, nbRuns: $('nbRuns').value, venue: $('venue').value };
+  const err = RPLEngine.validateSetup(RPLEngine.normalizeSetup(setup));
+  if (err) { $('newErr').textContent = err; return; }
+  if (st && st.status === 'live' && !confirm('A match is still going on. Stop it and start a new match? (Old match stays saved in Matches)')) return;
+  try { st = await api('/api/admin/match', { setup }); momPick = null; viewing = null; render(); show('score'); UI.toast('Match created'); }
+  catch (e) { $('newErr').textContent = e.message; }
+};
+function showLogin() { $('login').classList.remove('hide'); $('app').classList.add('hide'); $('logout').classList.add('hide'); }
+async function boot() {
+  const me = await (await fetch('/api/admin/me')).json();
+  if (!me.admin) return showLogin();
+  $('login').classList.add('hide'); $('app').classList.remove('hide'); $('logout').classList.remove('hide');
+  UI.connect(s => { const prevId = st && st.id; st = s; if (!s || s.id !== prevId) momPick = null; if (!$('modal').classList.contains('on')) render(); if (tab === 'past') loadPast(); },
+    null,
+    id => { if (viewing && viewing.id === id) { viewing = null; render(); } });
+  if (!st) { try { st = await (await fetch('/api/live')).json(); } catch (e) {} }
+  render(); if (!st) show('new');
+}
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  try { await api('/api/admin/login', { password: $('pw').value }); boot(); } catch (e) { $('loginErr').textContent = e.message; }
+};
+$('pw').onkeydown = e => { if (e.key === 'Enter') $('loginBtn').click(); };
+$('logout').onclick = async () => { await api('/api/admin/logout'); location.reload(); };
+
+// Load registered teams into New Match
+let pickList = [];
+async function loadPicks() {
+  try {
+    const r = await fetch('/api/admin/reg/teams', { cache: 'no-store' });
+    if (!r.ok) return;
+    const j = await r.json(); pickList = j.teams;
+    if (!pickList.length) { $('regPick').classList.add('hide'); return; }
+    const opts = '<option value="">- type manually -</option>' + pickList.map(t => '<option value="' + esc(t.id) + '">' + esc(t.name) + ' (' + esc(t.regNo) + ')</option>').join('');
+    for (const k of ['pickA', 'pickB']) { const v = $(k).value; $(k).innerHTML = opts; $(k).value = pickList.some(t => t.id === v) ? v : ''; }
+    $('regPick').classList.remove('hide');
+  } catch (e) { /* ignore */ }
+}
+function pickTeam(side) {
+  const t = pickList.find(x => x.id === $('pick' + side).value); if (!t) return;
+  $('team' + side).value = t.name;
+  $('players' + side).value = t.playing.join('\n');
+  syncToss();
+  UI.toast(t.name + ' loaded (Playing XI). Subs: ' + (t.subs.join(', ') || 'none'));
+}
+$('pickA').onchange = () => pickTeam('A');
+$('pickB').onchange = () => pickTeam('B');
+boot();
+</script>
+</body></html>

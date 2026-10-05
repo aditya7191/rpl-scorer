@@ -150,21 +150,23 @@ document.addEventListener('click', (e) => {
     case 'saveedit': return saveEdit(id);
     case 'askdel': return askDelTeam(id);
     case 'delok': return delTeam(id);
+    case 'close': return closeModal();
     case 'settings': settingsForm(); $('settingsCard').classList.toggle('hide'); return;
     case 'savesettings': return saveSettings();
     case 'delqr': return api('/api/admin/reg/qr', {}, 'DELETE').then(s => { regData.settings = s; settingsForm(); UI.toast('QR removed'); }).catch(err => UI.toast(err.message));
   }
 });
 document.addEventListener('DOMContentLoaded', () => {
-  $('tYear').onchange = () => loadTeams($('tYear').value);
-  $('tStatus').onchange = renderTeams;
-  $('tSearch').oninput = renderTeams;
-  $('pickA').onchange = () => pickTeam('A');
-  $('pickB').onchange = () => pickTeam('B');
+  if ($('tYear')) $('tYear').onchange = () => loadTeams($('tYear').value);
+  if ($('tStatus')) $('tStatus').onchange = renderTeams;
+  if ($('tSearch')) $('tSearch').oninput = renderTeams;
+  if ($('pickA')) $('pickA').onchange = () => pickTeam('A');
+  if ($('pickB')) $('pickB').onchange = () => pickTeam('B');
 });
 // ---- New Match: load registered teams ----
 let pickList = [];
 async function loadPicks() {
+  if (!$('regPick')) return;
   try {
     const r = await fetch('/api/admin/reg/teams', { cache: 'no-store' });
     if (!r.ok) return;
@@ -176,9 +178,10 @@ async function loadPicks() {
   } catch (e) { /* ignore */ }
 }
 function pickTeam(side) {
+  if (!$('pick' + side) || !$('team' + side)) return;
   const t = pickList.find(x => x.id === $('pick' + side).value); if (!t) return;
   $('team' + side).value = t.name;
   $('players' + side).value = t.playing.join('\n');
-  syncToss();
+  if (typeof syncToss === 'function') syncToss();
   UI.toast(t.name + ' loaded (Playing XI). Subs: ' + (t.subs.join(', ') || 'none'));
 }

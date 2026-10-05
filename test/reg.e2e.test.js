@@ -192,7 +192,6 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   const errs = []; a.on('pageerror', e => errs.push(e.message));
   await a.goto(URL + '/admin'); await a.fill('#pw', PW); await a.click('#loginBtn');
   await a.waitForSelector('#app:not(.hide)');
-  await a.click('[data-tab="teams"]');
   await a.waitForSelector('#tList [data-tid]');
   const n = (await a.$$('#tList [data-tid]')).length;
   ok(n === (wk ? 4 : 2), 'admin Teams tab lists all ' + n + ' teams');
@@ -242,13 +241,18 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   const pub = await chrome.newContext(android); const pp = await pub.newPage();
   await pp.goto(URL + '/register'); await pp.waitForSelector('#f:not(.hide)');
   ok((await pp.textContent('#upiId')) === 'rplcricket@okicici' && (await pp.getAttribute('a[href^="upi://"]', 'href')).includes('am=7000'), 'form shows UPI ID + UPI pay link once admin sets it');
-  // New Match: load registered team
-  await a.click('[data-tab="new"]'); await a.waitForSelector('#regPick:not(.hide)');
-  const optVal = await a.$eval('#pickA', s => [...s.options].find(o => o.text.includes('Rohidas Royals')).value);
-  await a.selectOption('#pickA', optVal);
-  ok(await a.inputValue('#teamA') === 'Rohidas Royals' && (await a.inputValue('#playersA')).split('\n').length === 11, 'New Match: registered team + Playing XI loaded into scorer');
+  // New Match (on /score/admin): load registered team
+  const sa = await actx.newPage();
+  await sa.goto(URL + '/score/admin');
+  // already logged in via shared cookie from /admin
+  await sa.waitForSelector('#app:not(.hide)');
+  await sa.click('[data-tab="new"]'); await sa.waitForSelector('#regPick:not(.hide)');
+  const optVal = await sa.$eval('#pickA', s => [...s.options].find(o => o.text.includes('Rohidas Royals')).value);
+  await sa.selectOption('#pickA', optVal);
+  ok(await sa.inputValue('#teamA') === 'Rohidas Royals' && (await sa.inputValue('#playersA')).split('\n').length === 11, 'New Match: registered team + Playing XI loaded into scorer');
+  await sa.close();
   // new year
-  await a.click('[data-tab="teams"]'); await a.click('[data-ra="settings"]'); await a.waitForSelector('#sYear');
+  await a.click('[data-ra="settings"]'); await a.waitForSelector('#sYear');
   await a.fill('#sYear', '2027'); await a.fill('#sSeason', 'RPL Season 8');
   await Promise.all([a.waitForResponse(r => r.url().endsWith('/api/admin/reg/settings') && r.status() === 200), a.click('[data-ra="savesettings"]')]);
   await pp.goto(URL + '/register'); await pp.waitForSelector('#f:not(.hide)');
@@ -268,18 +272,22 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   ok(!txt.includes('9820012345') && !txt.includes('9876543210') && !(await pp.content()).includes('screenshot'), '/teams shows no mobile numbers or screenshots');
   ok(pp.url().includes('year=2026'), '/teams URL keeps ?year=');
   await pp.screenshot({ path: path.join(SHOTS, 'teams-public.png'), fullPage: false });
-  // home page = the one link: big Register CTA at top, public content, small Admin Login at bottom
+  // home page = registration only: big Register CTA, Teams-by-year list, small Admin Login; no scoring links
   await pp.goto(URL + '/'); await pp.waitForFunction(() => document.getElementById('regCtaSub').textContent.includes('2027'));
   const lay = await pp.evaluate(() => {
     const y = (sel) => document.querySelector(sel).getBoundingClientRect().top + scrollY;
     const cta = document.getElementById('regCta'), adm = document.getElementById('adminLink');
-    return { cta: y('#regCta'), tabs: y('.tabs'), admin: y('#adminLink'), share: y('#shareBtn'), ctaH: cta.getBoundingClientRect().height, ctaHref: cta.getAttribute('href'), adminHref: adm.getAttribute('href'),
-      ctaText: cta.innerText, adminFont: parseFloat(getComputedStyle(adm).fontSize), last: [...document.querySelectorAll('.wrap a, .wrap button')].pop() === adm };
+    const links = [...document.querySelectorAll('a')].map(a => a.getAttribute('href') || '');
+    return { cta: y('#regCta'), teams: y('#v-teams'), admin: y('#adminLink'), ctaH: cta.getBoundingClientRect().height, ctaHref: cta.getAttribute('href'), adminHref: adm.getAttribute('href'),
+      ctaText: cta.innerText, adminFont: parseFloat(getComputedStyle(adm).fontSize), last: [...document.querySelectorAll('.wrap a, .wrap button')].pop() === adm,
+      hasTabs: !!document.querySelector('.tabs'), hasScoreLink: links.some(h => h === '/score' || h.startsWith('/score/') || h.includes('Live') || h.includes('score')),
+      bodyHasLive: /\bLive\b|Scorecard|No live match|Share score/i.test(document.body.innerText) };
   });
-  ok(lay.cta < lay.tabs && lay.cta < 80 && lay.ctaH >= 100 && lay.ctaHref === '/register' && lay.ctaText.includes('Register Your Team') && lay.ctaText.includes('RPL Season 8 · 2027 · Entry fee ₹7,000'), 'home: big "Register Your Team" section at the top (season, year, fee)');
-  ok(lay.admin > lay.share && lay.last && lay.adminHref === '/admin' && lay.adminFont <= 14, 'home: small "Admin Login" link at the very bottom');
-  await pp.click('.tabs [data-tab="teams"]'); await pp.waitForSelector('#v-teams .tteam');
-  ok((await pp.$$('#v-teams .tteam')).length === 1 && (await pp.$$eval('#v-teams #tvYear option', o => o.length)) === 2, 'home: Teams tab shows teams by year');
+  ok(lay.cta < lay.teams && lay.cta < 80 && lay.ctaH >= 100 && lay.ctaHref === '/register' && lay.ctaText.includes('Register Your Team') && lay.ctaText.includes('RPL Season 8 · 2027 · Entry fee ₹7,000'), 'home: big "Register Your Team" section at the top (season, year, fee)');
+  ok(lay.admin > lay.teams && lay.last && lay.adminHref === '/admin' && lay.adminFont <= 14, 'home: small "Admin Login" link at the very bottom');
+  ok(!lay.hasTabs && !lay.hasScoreLink && !lay.bodyHasLive, 'home: no scoring tabs/links/content');
+  await pp.waitForSelector('#v-teams .tteam');
+  ok((await pp.$$('#v-teams .tteam')).length === 1 && (await pp.$$eval('#v-teams #tvYear option', o => o.length)) === 2, 'home: Teams-by-year list shows teams');
   await pp.screenshot({ path: path.join(SHOTS, 'home.png') });
   await Promise.all([pp.waitForURL(/\/register$/), pp.click('#regCta')]);
   ok(true, 'home: tapping Register Your Team opens the form');
@@ -294,14 +302,14 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   await Promise.all([a.waitForResponse(r => r.url().endsWith('/api/admin/reg/settings') && r.status() === 200), a.click('[data-ra="savesettings"]')]);
   // watermark + logo on every page
   const tok = (await (await fetch(URL + '/api/reg/teams?year=2026')).json()).teams.length && JSON.parse(await a.evaluate(async () => JSON.stringify((await (await fetch('/api/admin/reg/teams?year=2026')).json()).teams[0].token)));
-  for (const [pg, u] of [[pp, '/'], [pp, '/register'], [pp, '/teams'], [pp, '/registration/' + tok], [a, '/admin']]) {
+  for (const [pg, u] of [[pp, '/'], [pp, '/register'], [pp, '/teams'], [pp, '/registration/' + tok], [a, '/admin'], [pp, '/score'], [a, '/score/admin']]) {
     await pg.goto(URL + u); await pg.waitForLoadState('networkidle');
     const w = await watermarkOk(pg);
     ok(w.bg.includes('logo-wm.webp') && w.op > 0 && w.op <= 0.1 && w.pos === 'fixed' && w.pe === 'none' && w.logo && w.wm, 'watermark (fixed, opacity ' + w.op + ') + header logo on ' + u);
   }
   if (wk) {
     const wctx = await wk.newContext(devices['iPhone 13']); const wp = await wctx.newPage();
-    for (const u of ['/', '/register', '/admin']) { await wp.goto(URL + u); await wp.waitForLoadState('networkidle'); const w = await watermarkOk(wp); ok(w.bg.includes('logo-wm.webp') && w.op <= 0.1 && w.logo, 'iPhone Safari: watermark + logo on ' + u); }
+    for (const u of ['/', '/register', '/admin', '/score']) { await wp.goto(URL + u); await wp.waitForLoadState('networkidle'); const w = await watermarkOk(wp); ok(w.bg.includes('logo-wm.webp') && w.op <= 0.1 && w.logo, 'iPhone Safari: watermark + logo on ' + u); }
     await wctx.close();
   }
   ok(errs.length === 0, 'admin: no JS errors ' + errs.join('; '));

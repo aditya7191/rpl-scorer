@@ -1,4 +1,4 @@
-// End-to-end test: starts server, drives admin UI in headless Chrome, checks public live page updates.
+// End-to-end test: starts server, drives scoring admin UI in headless Chrome, checks public /score live page updates.
 // Run: node test/e2e.test.js   (needs Chrome at CHROME_PATH or /usr/bin/google-chrome)
 const { chromium } = require('playwright-core');
 const { spawn } = require('child_process');
@@ -29,7 +29,7 @@ const stopServer = () => new Promise(r => { srv.once('exit', r); srv.kill(); });
   const pub = await viewerCtx.newPage(), adm = await adminCtx.newPage();
   const errs = []; for (const p of [pub, adm]) p.on('pageerror', e => errs.push(e.message));
 
-  await pub.goto(URL + '/');
+  await pub.goto(URL + '/score');
   await pub.waitForSelector('text=No live match');
   ok(true, 'public page loads, no match');
 
@@ -39,7 +39,7 @@ const stopServer = () => new Promise(r => { srv.once('exit', r); srv.kill(); });
   const d401 = await pub.evaluate(async () => (await fetch('/api/admin/matches/x', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status);
   ok(d401 === 401, 'delete API blocked for viewer (401)');
 
-  await adm.goto(URL + '/admin');
+  await adm.goto(URL + '/score/admin');
   await adm.fill('#pw', 'wrong'); await adm.click('#loginBtn');
   await adm.waitForSelector('text=Wrong password'); ok(true, 'wrong password rejected');
   await adm.waitForTimeout(1100);
