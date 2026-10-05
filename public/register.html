@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Team Registration - RPL (Rohidas Premier League)</title><meta name="theme-color" content="#f59e0b">
+<meta name="description" content="Register your team for Rohidas Premier League (RPL) box cricket.">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="/"><img src="/logo-128.png" alt="RPL logo" width="42" height="42"><h1>RPL Registration<small>Rohidas Premier League · Box Cricket</small></h1></a>
+<div class="hdr-r"><a class="pill" href="/">🏏 Live</a></div></header>
+<div class="wrap">
+  <div id="loading" class="card mut">Loading...</div>
+  <div id="mine" class="card hide"></div>
+  <div id="closed" class="card hide"><h2>Registration is closed</h2><div class="mut">Registration band hai. Please contact the RPL organisers.</div>
+    <div style="margin-top:10px"><a href="/teams">See registered teams</a></div></div>
+  <form id="f" class="hide" novalidate autocomplete="on">
+    <div class="card hero">
+      <div class="season" id="seasonTxt"></div>
+      <h2>Team Registration</h2>
+      <div class="mut">Fill all details. Fields with <span class="req">*</span> are required. <span class="hi">(Sab details bharo)</span></div>
+      <div id="feeBox"></div>
+      <div id="noteBox" class="mut" style="margin-top:6px"></div>
+    </div>
+    <div id="errTop" class="card err hide" role="alert"></div>
+
+    <div class="card">
+      <h3>1. Team</h3>
+      <label for="teamName">Team name <span class="req">*</span> <span class="hi">टीम का नाम</span></label>
+      <input id="teamName" name="teamName" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="e.g. Rohidas Royals">
+      <div class="ferr" data-err="teamName"></div><span class="hint" id="nameOk"></span>
+    </div>
+
+    <div class="card">
+      <h3>2. Captain &amp; Vice-captain</h3>
+      <label for="captainName">Captain name <span class="req">*</span> <span class="hi">कप्तान</span></label>
+      <input id="captainName" maxlength="40" autocapitalize="words" autocomplete="off" placeholder="Full name">
+      <div class="ferr" data-err="captainName"></div>
+      <label for="captainMobile">Captain mobile <span class="req">*</span></label>
+      <input id="captainMobile" type="tel" inputmode="numeric" maxlength="14" autocomplete="tel" placeholder="10-digit mobile number">
+      <div class="ferr" data-err="captainMobile"></div>
+      <label for="vcName">Vice-captain name <span class="req">*</span> <span class="hi">उप-कप्तान</span></label>
+      <input id="vcName" maxlength="40" autocapitalize="words" autocomplete="off" placeholder="Full name">
+      <div class="ferr" data-err="vcName"></div>
+      <label for="vcMobile">Vice-captain mobile <span class="req">*</span></label>
+      <input id="vcMobile" type="tel" inputmode="numeric" maxlength="14" autocomplete="off" placeholder="10-digit mobile number">
+      <div class="ferr" data-err="vcMobile"></div>
+    </div>
+
+    <div class="card">
+      <div class="sect"><h3>3. Players <span id="totalTxt"></span></h3><span class="pill" id="countPill">0 / 15</span></div>
+      <div class="mut">Write all player names in English. Captain and vice-captain are already counted. <span class="hi">(Har player ka naam ek baar)</span></div>
+      <div class="sect"><h3 id="xiTitle">Playing XI</h3><span class="mut" id="xiNote"></span></div>
+      <div id="xiRows"></div>
+      <div class="ferr" data-err="playing"></div>
+      <div class="sect"><h3 id="subTitle">Substitutes (injury replacement)</h3></div>
+      <div class="mut" style="margin-bottom:6px">Only play if someone from the Playing XI gets injured. <span class="hi">(Injury hone par replacement)</span></div>
+      <div id="subRows"></div>
+      <div class="ferr" data-err="subs"></div>
+    </div>
+
+    <div class="card">
+      <h3>4. Payment</h3>
+      <label>Payment done? <span class="req">*</span> <span class="hi">पेमेंट हो गया?</span></label>
+      <div class="yn" role="radiogroup"><button type="button" id="payYes" role="radio" aria-checked="false">✅ Yes</button><button type="button" id="payNo" role="radio" aria-checked="false">⏳ Not yet</button></div>
+      <div class="ferr" data-err="paymentDone"></div>
+      <div id="payYesBox" class="hide">
+        <label for="shot">Payment screenshot <span class="req">*</span> <span class="hi">स्क्रीनशॉट</span></label>
+        <div class="filebox"><input id="shot" type="file" accept="image/*"><div class="mut">JPG / PNG screenshot, max 8 MB</div><img id="preview" class="preview hide" alt="Screenshot preview"></div>
+        <div class="ferr" data-err="screenshot"></div>
+        <label for="utr">UTR / Transaction ID (optional)</label>
+        <input id="utr" maxlength="30" autocomplete="off" autocapitalize="characters" placeholder="e.g. 412345678901">
+        <div class="ferr" data-err="utr"></div>
+      </div>
+      <div id="payNoBox" class="mut hide" style="margin-top:8px">No problem. After registering you get a private link. Pay later and upload the screenshot there. <span class="hi">(Baad mein bhi upload kar sakte ho)</span></div>
+    </div>
+
+    <button class="big" id="submitBtn" type="submit">🏏 Register Team</button>
+    <div class="mut" style="text-align:center;margin:12px 0 24px">Your details are only seen by RPL organisers. Mobile numbers are never shown publicly.</div>
+  </form>
+</div>
+<script src="/reg-common.js"></script>
+<script>
+const { $, esc, rupees, toast } = RC;
+let cfg = null, payDone = null, shotFile = null, busy = false;
+
+function payBox(c) {
+  if (!c.fee && !c.upiId && !c.qr) return '';
+  let h = '';
+  if (c.fee) h += '<div class="fee">Entry fee: ' + rupees(c.fee) + ' per team</div>';
+  if (c.upiId || c.qr) {
+    h += '<div class="paybox"><b>Pay here</b> <span class="hi">(yahan pay karo)</span>';
+    if (c.upiId) {
+      const link = 'upi://pay?pa=' + encodeURIComponent(c.upiId) + (c.payeeName ? '&pn=' + encodeURIComponent(c.payeeName) : '') + (c.fee ? '&am=' + c.fee : '') + '&cu=INR&tn=' + encodeURIComponent('RPL registration');
+      h += '<div class="upi" style="margin-top:6px"><span class="mut">UPI ID:</span> <code id="upiId">' + esc(c.upiId) + '</code><button type="button" class="sbtn" id="copyUpi">Copy</button></div>';
+      if (c.payeeName) h += '<div class="mut">Name: ' + esc(c.payeeName) + '</div>';
+      h += '<a class="big sec" style="display:block;text-align:center;text-decoration:none" href="' + esc(link) + '">📲 Pay with UPI app (GPay / PhonePe / Paytm)</a>';
+    }
+    if (c.qr) h += '<img src="/api/reg/qr" alt="Payment QR code" id="qrImg">';
+    h += '<div class="mut" style="margin-top:6px">After paying, take a screenshot and upload it below.</div></div>';
+  }
+  return h;
+}
+function row(kind, idx, no, label, ro) {
+  const id = (kind === 'xi' ? 'p' : 's') + idx;
+  return '<div class="prow"><span class="no' + (kind === 'sub' ? ' sub' : '') + '">' + no + '</span>' +
+    '<input id="' + id + '" data-kind="' + kind + '" data-idx="' + idx + '" maxlength="40" autocapitalize="words" autocomplete="off" placeholder="' + esc(label) + '"' + (ro ? ' readonly tabindex="-1"' : '') + '>' +
+    (ro ? '<span class="tag">' + (ro === 'c' ? 'C' : 'VC') + '</span>' : '') + '</div><div class="ferr" data-err="' + (kind === 'xi' ? 'playing.' : 'subs.') + idx + '"></div>';
+}
+function buildRows() {
+  const P = cfg.playingCount, S = cfg.subsCount, T = P + S;
+  $('totalTxt').textContent = '(' + T + ' required)';
+  $('xiTitle').textContent = 'Playing XI (' + P + ')';
+  $('subTitle').textContent = 'Substitutes (' + S + ') – injury replacement';
+  let h = '<div class="prow"><span class="no">1</span><input id="pc" readonly tabindex="-1" placeholder="Captain (fill above)"><span class="tag">C</span></div>' +
+    '<div class="prow"><span class="no">2</span><input id="pv" readonly tabindex="-1" placeholder="Vice-captain (fill above)"><span class="tag">VC</span></div>';
+  for (let i = 0; i < P - 2; i++) h += row('xi', i, i + 3, 'Player ' + (i + 3) + ' name');
+  $('xiRows').innerHTML = h;
+  let s = '';
+  for (let i = 0; i < S; i++) s += row('sub', i, P + i + 1, 'Substitute ' + (i + 1) + ' name');
+  $('subRows').innerHTML = s;
+  if (!S) $('subTitle').parentNode.classList.add('hide');
+  count();
+}
+function count() {
+  $('pc').value = $('captainName').value.trim(); $('pv').value = $('vcName').value.trim();
+  const all = [...document.querySelectorAll('#xiRows input, #subRows input')];
+  const n = all.filter(i => i.value.trim()).length, T = cfg.playingCount + cfg.subsCount;
+  $('countPill').textContent = n + ' / ' + T;
+  $('countPill').style.background = n === T ? 'var(--grn)' : '';
+}
+function setPay(v) {
+  payDone = v;
+  $('payYes').classList.toggle('on', v === true); $('payNo').classList.toggle('on', v === false);
+  $('payYes').setAttribute('aria-checked', String(v === true)); $('payNo').setAttribute('aria-checked', String(v === false));
+  $('payYesBox').classList.toggle('hide', v !== true); $('payNoBox').classList.toggle('hide', v !== false);
+  showErr('paymentDone', '');
+}
+function showErr(field, msg) {
+  const el = document.querySelector('[data-err="' + field + '"]');
+  if (el) el.textContent = msg || '';
+  const input = fieldInput(field);
+  if (input) input.classList.toggle('bad', !!msg);
+}
+function fieldInput(field) {
+  const m = field.match(/^(playing|subs)\.(\d+)$/);
+  if (m) return $((m[1] === 'playing' ? 'p' : 's') + m[2]);
+  return { teamName: $('teamName'), captainName: $('captainName'), captainMobile: $('captainMobile'), vcName: $('vcName'), vcMobile: $('vcMobile'), utr: $('utr'), screenshot: $('shot') }[field] || null;
+}
+function clearErrs() { document.querySelectorAll('[data-err]').forEach(e => e.textContent = ''); document.querySelectorAll('.bad').forEach(e => e.classList.remove('bad')); $('errTop').classList.add('hide'); }
+function showErrs(errors, top) {
+  const keys = Object.keys(errors);
+  keys.forEach(k => showErr(k, errors[k]));
+  $('errTop').textContent = top || ('Please fix ' + keys.length + ' thing' + (keys.length > 1 ? 's' : '') + ' marked in red. (Laal wale fields theek karo)');
+  $('errTop').classList.remove('hide');
+  const first = keys.map(k => fieldInput(k) || document.querySelector('[data-err="' + k + '"]')).find(Boolean);
+  if (first) { first.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (first.focus && first.tagName === 'INPUT' && first.type !== 'file') setTimeout(() => first.focus({ preventScroll: true }), 300); }
+}
+// client-side check (server checks again)
+const NAME_RE = /^[A-Za-z0-9\u00C0-\u024F][A-Za-z0-9\u00C0-\u024F .'&()\-]*$/;
+function checkName(v, label) {
+  v = v.replace(/\s+/g, ' ').trim();
+  if (!v) return label + ' is required';
+  if (v.length < 2) return label + ' is too short';
+  if (!NAME_RE.test(v)) return label + ': write in English letters (A-Z, 0-9)';
+  return '';
+}
+function mobileOk(v) {
+  let d = v.replace(/[\s\-().]/g, '');
+  if (/^\+91\d{10}$/.test(d)) d = d.slice(3); else if (/^91\d{10}$/.test(d)) d = d.slice(2); else if (/^0\d{10}$/.test(d)) d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d);
+}
+function collect() {
+  return {
+    teamName: $('teamName').value, captainName: $('captainName').value, captainMobile: $('captainMobile').value,
+    vcName: $('vcName').value, vcMobile: $('vcMobile').value,
+    playing: [...document.querySelectorAll('#xiRows input[data-kind]')].map(i => i.value),
+    subs: [...document.querySelectorAll('#subRows input[data-kind]')].map(i => i.value),
+    paymentDone: payDone === true ? 'yes' : payDone === false ? 'no' : '', utr: payDone ? $('utr').value : '',
+  };
+}
+function validate(d) {
+  const e = {};
+  const put = (k, m) => { if (m) e[k] = m; };
+  put('teamName', checkName(d.teamName, 'Team name'));
+  put('captainName', checkName(d.captainName, 'Captain name'));
+  put('vcName', checkName(d.vcName, 'Vice-captain name'));
+  if (!mobileOk(d.captainMobile)) e.captainMobile = 'Enter a valid 10-digit mobile number';
+  if (!mobileOk(d.vcMobile)) e.vcMobile = 'Enter a valid 10-digit mobile number';
+  d.playing.forEach((v, i) => put('playing.' + i, checkName(v, 'Player ' + (i + 3))));
+  d.subs.forEach((v, i) => put('subs.' + i, checkName(v, 'Substitute ' + (i + 1))));
+  const seen = {};
+  [['captainName', d.captainName]].concat([['vcName', d.vcName]], d.playing.map((v, i) => ['playing.' + i, v]), d.subs.map((v, i) => ['subs.' + i, v])).forEach(([k, v]) => {
+    const key = v.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/g, ' ').trim(); if (!key) return;
+    if (seen[key] && !e[k]) e[k] = '"' + v.trim() + '" is written twice'; else seen[key] = 1;
+  });
+  if (!d.paymentDone) e.paymentDone = 'Select Yes or Not yet';
+  if (d.paymentDone === 'yes' && !shotFile) e.screenshot = 'Please upload the payment screenshot';
+  if (d.utr && !/^[A-Za-z0-9]{6,30}$/.test(d.utr.replace(/\s+/g, ''))) e.utr = 'Only letters and numbers (6 to 30)';
+  return e;
+}
+
+$('f').addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (t.classList.contains('bad')) { const f = Object.entries({ teamName: 'teamName', captainName: 'captainName', captainMobile: 'captainMobile', vcName: 'vcName', vcMobile: 'vcMobile', utr: 'utr' }).find(([, id]) => id === t.id); if (f) showErr(f[0], ''); else if (t.dataset.kind) showErr((t.dataset.kind === 'xi' ? 'playing.' : 'subs.') + t.dataset.idx, ''); }
+  count();
+  if (![...document.querySelectorAll('[data-err]')].some(e => e.textContent)) $('errTop').classList.add('hide');
+});
+$('payYes').onclick = () => setPay(true);
+$('payNo').onclick = () => setPay(false);
+$('teamName').addEventListener('blur', async () => {
+  const v = $('teamName').value.trim(); $('nameOk').textContent = '';
+  if (!v || checkName(v, 'x')) return;
+  try { const r = await RC.getJSON('/api/reg/name-check?name=' + encodeURIComponent(v)); if (r.available) $('nameOk').textContent = '✅ Name available'; else showErr('teamName', r.error); } catch (e) { /* ignore */ }
+});
+$('shot').addEventListener('change', async () => {
+  const f = $('shot').files[0]; shotFile = null; showErr('screenshot', ''); $('preview').classList.add('hide');
+  if (!f) return;
+  if (f.type && !/^image\//.test(f.type)) { showErr('screenshot', 'Only image files (JPG, PNG) are allowed'); $('shot').value = ''; return; }
+  const small = await RC.shrinkImage(f);
+  if (small.size > 8 * 1024 * 1024) { showErr('screenshot', 'Image is too big (max 8 MB)'); $('shot').value = ''; return; }
+  shotFile = small;
+  if (![...document.querySelectorAll('[data-err]')].some(e => e.textContent)) $('errTop').classList.add('hide');
+  $('preview').src = URL.createObjectURL(small); $('preview').classList.remove('hide');
+});
+$('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  if (busy) return;
+  clearErrs();
+  const d = collect();
+  const errs = validate(d);
+  if (Object.keys(errs).length) return showErrs(errs);
+  busy = true; $('submitBtn').disabled = true; $('submitBtn').textContent = 'Submitting... please wait';
+  try {
+    const fd = new FormData();
+    fd.append('data', JSON.stringify(d));
+    if (d.paymentDone === 'yes' && shotFile) fd.append('screenshot', shotFile, shotFile.name || 'screenshot.jpg');
+    const r = await RC.postForm('/api/reg/submit', fd);
+    RC.remember({ token: r.token, regNo: r.regNo, team: d.teamName.trim(), when: Date.now() });
+    location.href = r.url + '?new=1';
+  } catch (e) {
+    if (e.body && e.body.errors) showErrs(e.body.errors, e.message);
+    else { $('errTop').textContent = e.message === 'Failed to fetch' ? 'No internet? Please check connection and try again.' : e.message; $('errTop').classList.remove('hide'); $('errTop').scrollIntoView({ behavior: 'smooth' }); }
+    busy = false; $('submitBtn').disabled = false; $('submitBtn').textContent = '🏏 Register Team';
+  }
+});
+
+(async function boot() {
+  const mine = RC.remembered();
+  if (mine.length) {
+    $('mine').innerHTML = '<b>Already registered from this phone:</b>' + mine.map(m => '<div><a href="/registration/' + encodeURIComponent(m.token) + '">' + esc(m.regNo) + ' · ' + esc(m.team) + '</a></div>').join('');
+    $('mine').classList.remove('hide');
+  }
+  try { cfg = await RC.getJSON('/api/reg/config'); }
+  catch (e) { $('loading').textContent = 'Could not load. Check internet and refresh.'; return; }
+  $('loading').classList.add('hide');
+  if (!cfg.open) { $('closed').classList.remove('hide'); return; }
+  $('seasonTxt').textContent = cfg.season + ' · ' + cfg.year;
+  $('feeBox').innerHTML = payBox(cfg);
+  $('noteBox').textContent = cfg.note || '';
+  const cu = $('copyUpi'); if (cu) cu.onclick = () => RC.copy(cfg.upiId);
+  buildRows();
+  $('captainName').addEventListener('input', count); $('vcName').addEventListener('input', count);
+  $('f').classList.remove('hide');
+})();
+</script>
+</body></html>

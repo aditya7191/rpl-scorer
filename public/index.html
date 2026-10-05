@@ -1,20 +1,42 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>RPL Scorer - Rohidas Premier League</title><meta name="theme-color" content="#f59e0b">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="stylesheet" href="/style.css"></head>
 <body>
-<header><h1>🏏 RPL Scorer<small>Rohidas Premier League · Live Score</small></h1><span id="conn" class="pill">...</span></header>
+<header><a class="brand" href="/"><img src="/logo-128.png" alt="RPL logo" width="42" height="42"><h1>RPL Scorer<small>Rohidas Premier League · Live</small></h1></a>
+<div class="hdr-r"><span id="conn" class="pill">...</span></div></header>
 <div class="wrap">
-  <div class="tabs"><button data-tab="live" class="on">Live</button><button data-tab="card">Scorecard</button><button data-tab="past">Matches</button></div>
+  <a class="regcta" id="regCta" href="/register">
+    <span class="t">🏏 Register Your Team</span>
+    <span class="s" id="regCtaSub">Rohidas Premier League</span>
+    <span class="go" id="regCtaGo">Register now →</span>
+  </a>
+  <div class="tabs"><button data-tab="live" class="on">Live</button><button data-tab="card">Scorecard</button><button data-tab="past">Matches</button><button data-tab="teams">Teams</button></div>
   <div id="v-live"></div>
   <div id="v-card" class="hide"></div>
   <div id="v-past" class="hide"></div>
-  <button class="big sec" id="shareBtn">📤 Share score (WhatsApp)</button>
-  <div class="mut" style="text-align:center;margin:14px 0">Score updates automatically. No need to refresh.</div>
+  <div id="v-teams" class="hide"></div>
+  <div id="shareBox"><button class="big sec" id="shareBtn">📤 Share score (WhatsApp)</button>
+  <div class="mut" style="text-align:center;margin:14px 0">Score updates automatically. No need to refresh.</div></div>
+  <div class="foot"><a href="/admin" id="adminLink" class="adminlink">🔒 Admin Login</a></div>
 </div>
-<script src="/engine.js"></script><script src="/ui.js"></script>
+<script src="/engine.js"></script><script src="/ui.js"></script><script src="/reg-common.js"></script><script src="/teams-view.js"></script>
 <script>
-let live = null, viewing = null, tab = 'live';
+let live = null, viewing = null, tab = 'live', teamsView = null;
+// Registration call-to-action at the top (season, fee, open/closed come from admin settings)
+fetch('/api/reg/config').then(r => r.json()).then(c => {
+  if (c.open) {
+    $('regCtaSub').textContent = c.season + ' · ' + c.year + (c.fee ? ' · Entry fee ₹' + Number(c.fee).toLocaleString('en-IN') : '');
+  } else {
+    $('regCta').classList.add('closed'); $('regCta').href = '#teams';
+    $('regCta').querySelector('.t').textContent = '🏏 ' + c.season + ' registration closed';
+    $('regCtaSub').textContent = 'See all registered teams below';
+    $('regCtaGo').textContent = 'View teams →';
+    $('regCta').onclick = (e) => { e.preventDefault(); show('teams'); };
+  }
+}).catch(() => {});
+if (new URLSearchParams(location.search).get('tab') === 'teams' || location.hash === '#teams') setTimeout(() => show('teams'));
 const $ = id => document.getElementById(id);
 function render() {
   $('v-live').innerHTML = UI.live(live);
@@ -28,8 +50,10 @@ async function loadPast() {
 function show(t) {
   tab = t;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  ['live', 'card', 'past'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
+  ['live', 'card', 'past', 'teams'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
+  $('shareBox').classList.toggle('hide', t === 'teams' || t === 'past');
   if (t === 'past') loadPast();
+  if (t === 'teams') { if (!teamsView) teamsView = TeamsView($('v-teams')); else teamsView.reload(); }
 }
 document.querySelector('.tabs').onclick = e => { if (e.target.dataset.tab) show(e.target.dataset.tab); };
 $('v-past').onclick = async e => {
@@ -42,7 +66,7 @@ $('v-past').onclick = async e => {
 };
 $('shareBtn').onclick = () => UI.share(tab === 'card' && viewing ? viewing : live);
 UI.connect(st => { live = st; render(); if (tab === 'past') loadPast(); },
-  ok => { $('conn').textContent = ok ? '● Connected' : 'Reconnecting...'; },
+  ok => { $('conn').textContent = ok ? '● Live' : '...'; $('conn').title = ok ? 'Connected' : 'Reconnecting'; },
   id => {
     // a match was deleted by the admin: drop it from whatever this viewer is looking at
     if (viewing && viewing.id === id) { viewing = null; UI.toast('This match was deleted'); }

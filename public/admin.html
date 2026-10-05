@@ -1,9 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>RPL Scorer - Rohidas Premier League (Admin)</title><meta name="theme-color" content="#f59e0b">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="stylesheet" href="/style.css"></head>
 <body>
-<header><h1>🏏 RPL Scorer<small>Rohidas Premier League · Admin Scoring</small></h1><button id="logout" class="pill hide" style="border:0">Logout</button></header>
+<header><a class="brand" href="/admin"><img src="/logo-128.png" alt="RPL logo" width="42" height="42"><h1>RPL Admin<small>Rohidas Premier League · Scoring &amp; Teams</small></h1></a><button id="logout" class="pill hide" style="border:0">Logout</button></header>
 <div class="wrap">
   <div id="login" class="card hide">
     <h2>Admin login</h2>
@@ -12,13 +13,15 @@
     <div class="mut" style="margin-top:10px">Only viewing score? <a href="/" style="color:var(--acc)">Open live score</a></div>
   </div>
   <div id="app" class="hide">
-    <div class="tabs"><button data-tab="score" class="on">Score</button><button data-tab="card">Scorecard</button><button data-tab="past">Matches</button><button data-tab="new">New Match</button></div>
+    <div class="tabs"><button data-tab="score" class="on">Score</button><button data-tab="card">Card</button><button data-tab="past">Matches</button><button data-tab="new">New</button><button data-tab="teams">Teams</button></div>
     <div id="v-score"><div id="board"></div><div id="ctrl"></div></div>
     <div id="v-card" class="hide"></div>
     <div id="v-past" class="hide"></div>
     <div id="v-new" class="hide">
       <div class="card">
         <h2>New Match Setup</h2>
+        <div id="regPick" class="hide"><div class="mut">Load a registered team (fills name + Playing XI):</div>
+          <div class="two"><div><label>Team A from registrations</label><select id="pickA"></select></div><div><label>Team B from registrations</label><select id="pickB"></select></div></div></div>
         <div class="two"><div><label>Team A name</label><input id="teamA" value="Team A"></div><div><label>Team B name</label><input id="teamB" value="Team B"></div></div>
         <div class="two"><div><label>Team A players (one per line)</label><textarea id="playersA"></textarea></div><div><label>Team B players (one per line)</label><textarea id="playersB"></textarea></div></div>
         <div class="two"><div><label>Overs per innings</label><input id="overs" type="number" min="1" max="50" value="4" inputmode="numeric"></div><div><label>Max overs per bowler (0 = no limit)</label><input id="maxOv" type="number" min="0" value="0" inputmode="numeric"></div></div>
@@ -28,10 +31,22 @@
         <button class="big" id="createBtn">✅ Start New Match</button><div id="newErr" class="err"></div>
       </div>
     </div>
+    <div id="v-teams" class="hide">
+      <div class="card">
+        <div class="toolbar"><label for="tYear" style="margin:0">Year</label><select id="tYear"></select>
+          <select id="tStatus"><option value="">All payments</option><option value="not_paid">Not paid</option><option value="uploaded">Screenshot uploaded</option><option value="verified">Verified</option><option value="rejected">Rejected</option></select></div>
+        <input id="tSearch" type="search" placeholder="Search team, captain, player, mobile" style="margin-top:8px">
+        <div id="tStats" class="stats" style="margin-top:8px"></div>
+        <div class="btnrow"><a class="big sec" id="csvBtn" style="text-align:center;text-decoration:none;display:block">⬇️ Export CSV</a><button class="big sec" data-ra="settings">⚙️ Settings</button></div>
+        <div class="mut" style="margin-top:8px">Form: <a href="/register" target="_blank" id="regUrl">/register</a> · Public list: <a href="/teams" target="_blank">/teams</a> · <span id="regOpen"></span></div>
+      </div>
+      <div id="settingsCard" class="card hide"></div>
+      <div id="tList"></div>
+    </div>
   </div>
 </div>
 <div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
-<script src="/engine.js"></script><script src="/ui.js"></script>
+<script src="/engine.js"></script><script src="/ui.js"></script><script src="/admin-teams.js"></script>
 <script>
 const $ = id => document.getElementById(id), esc = UI.esc;
 let st = null, tab = 'score', viewing = null, momPick = null, busy = false, pastList = [];
@@ -195,9 +210,10 @@ $('v-past').addEventListener('click', async e => {
 function show(t) {
   tab = t;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  ['score', 'card', 'past', 'new'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
+  ['score', 'card', 'past', 'new', 'teams'].forEach(x => $('v-' + x).classList.toggle('hide', x !== t));
   if (t === 'past') loadPast();
-  if (t === 'new') syncToss();
+  if (t === 'new') { syncToss(); loadPicks(); }
+  if (t === 'teams') loadTeams();
   window.scrollTo(0, 0);
 }
 function syncToss() { const s = $('tossWinner'); s.options[0].text = $('teamA').value || 'Team A'; s.options[1].text = $('teamB').value || 'Team B'; }

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const path = require('path');
 const E = require('./public/engine.js');
 const { createStore } = require('./storage.js');
+const { createRegistration } = require('./reg/routes.js');
 
 const PORT = parseInt(process.env.PORT, 10) || 8080;
 const PASSWORD = process.env.RPL_ADMIN_PASSWORD;
@@ -81,7 +82,13 @@ setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000
 const app = express();
 app.set('trust proxy', true);
 app.use(express.json({ limit: '200kb' }));
-app.use((req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
+app.use((req, res, next) => {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
+  next();
+});
+// team registration (/register, /teams, /registration/<token>, admin Teams tab APIs)
+const reg = createRegistration({ store, isAdmin: (req) => isAdmin(req), requireAdmin: (req, res, next) => requireAdmin(req, res, next) });
+reg.mount(app);
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: 0 }));
@@ -201,16 +208,17 @@ function sanitizeEvent(ev) {
 
 // ---------- start ----------
 let server;
-store.init().then((loaded) => {
+store.init().then(async (loaded) => {
   db = { currentId: loaded.currentId || null, matches: Array.isArray(loaded.matches) ? loaded.matches : [] };
-  console.log('Storage: ' + store.describe() + ' - ' + db.matches.length + ' match(es) loaded');
+  const r = await reg.load();
+  console.log('Storage: ' + store.describe() + ' - ' + db.matches.length + ' match(es), ' + r.teams.length + ' registered team(s) loaded');
   server = app.listen(PORT, () => console.log('RPL Scorer running on http://localhost:' + PORT + '  (admin: /admin)'));
 }).catch((e) => { console.error('ERROR: storage init failed:', e.message || e.code || String(e)); process.exit(1); });
 
 function shutdown(sig) {
   console.log(sig + ' received, shutting down');
   for (const res of clients) res.end();
-  const done = () => serialized(() => store.close()).finally(() => process.exit(0));
+  const done = () => Promise.all([serialized(() => {}), reg.close()]).then(() => store.close()).finally(() => process.exit(0));
   if (server) { server.close(done); if (server.closeIdleConnections) server.closeIdleConnections(); } else done();
   setTimeout(() => process.exit(0), 5000).unref();
 }

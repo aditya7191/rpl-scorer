@@ -2,8 +2,11 @@
 
 Live cricket scoring web app. **One admin scores, everyone else watches live (read-only).**
 
-- `/` – public live score, scorecards, past matches (auto-updates, no refresh needed)
-- `/admin` – scoring panel (password protected)
+- `/` – **the one link for everyone**: big *Register Your Team* button at the top, then live score, scorecards, past matches and registered teams (year-wise), and a small *Admin Login* link at the bottom
+- `/register` – team registration form (mobile-first)
+- `/registration/<token>` – a team's private page: thank-you card (download / share), details, upload payment later
+- `/teams?year=YYYY` – public read-only list of registered teams per year (no mobile numbers, no screenshots)
+- `/admin` – scoring panel + **Teams** tab (password protected)
 
 ## Run locally
 ```bash
@@ -35,10 +38,22 @@ The admin login stays valid for 30 days (an HttpOnly cookie).
 - Rules: Wide/No Ball extra runs can be set in setup (default 1). Runs taken on a wide count as wides. No-ball runs off the bat go to the batsman. Byes/leg byes count as a ball faced but are not charged to the bowler. A bowler can't bowl two overs in a row. You can also set a max overs per bowler. Strike changes on odd runs and at the end of each over.
 - Man of the Match points: runs 1 each, +1 per four, +2 per six, SR 150+ (min 5 balls) +5, SR 200+ +10, 30+ runs +5, 50+ runs +10, wicket +20, 3+ wickets +10, maiden +10, economy ≤6 (min 1 over) +5, economy ≤4 +10, economy 12+ −5, catch/stumping/run-out +5, winning team +10. The admin can confirm the suggestion or pick another player.
 
+## Team registration
+- **Form** (`/register`): team name (unique per year, case/space-insensitive), captain + vice-captain names and 10-digit mobiles, exactly **15 players = Playing XI (11, captain and VC are players 1 and 2) + 4 substitutes (injury replacement)**, payment done Yes / Not yet, payment screenshot (required if Yes) and optional UTR. Names must be in English letters. The form shows the entry fee, UPI ID (with a *Pay with UPI app* link) and payment QR **only when the admin has set them**.
+- Screenshots are made smaller in the phone browser, then checked on the server (real image check by magic bytes, max 8 MB), auto-rotated, resized to max 1600 px and saved as JPEG **in Postgres (`rpl_images`, BYTEA)**, never on Render's disk. Only the admin can view them.
+- After submitting, the server draws a 1080x1350 **thank-you card** PNG (`reg/image.js`, @napi-rs/canvas, bundled fonts in `assets/fonts`, RPL logo, no network) with team name, captain, VC and registration number (e.g. `RPL7-001`, from the season number). The success page has Download and Share (Web Share with the image file; falls back to "long-press to save" on phones that cannot share files). The private link `/registration/<token>` keeps working, and teams can upload the payment screenshot there later.
+- **Admin → Teams tab**: year selector (all years with data), status filter and search, details (Playing XI / substitutes split, mobiles, UTR, screenshot), Verify / Reject / Undo, Edit, Delete (with confirm), upload a screenshot for a team, Export CSV (per year or all years; split columns), **Settings**: registration open/closed, registration year, season name, entry fee (default ₹7000), UPI ID + payee name, payment QR image, Playing XI count (11) and substitutes count (4), note on the form. In **New**, a registered team's name and Playing XI can be loaded into a new match.
+- Every team belongs to a year (`settings.year`). Changing the year starts a new registration year, old years stay in the history and team names only need to be unique within a year.
+- Security: all input is validated and cleaned on the server, all output is HTML-escaped, submissions are rate-limited per IP (`RPL_REG_RATE`, default `10/600` = 10 per 10 minutes), admin writes need the login cookie plus a JSON body or `X-RPL-Admin` header (CSRF guard), private pages send `Referrer-Policy: no-referrer` and `noindex`.
+- Storage: Postgres tables `rpl_teams` (one row per team, JSONB, unique `(year, name_key)`), `rpl_images`, and settings/counters in `rpl_meta`. Created automatically. JSON fallback: `data/registrations.json` + `data/images/`.
+- Logo: header of every page and a faint fixed watermark behind every page (`public/logo-wm.webp`, made from the RPL channel picture with the white background removed).
+
 ## Tests
 ```bash
-npm test     # engine unit tests + restart/durability test + full headless browser E2E
-             # (needs Chrome; set CHROME_PATH if not /usr/bin/google-chrome)
+npm test     # engine + registration unit tests, restart/durability tests, registration API test,
+             # full headless browser E2E (scorer + registration at phone size: Android Chrome and,
+             # if Playwright WebKit is installed, iPhone Safari). Needs Chrome (CHROME_PATH).
+             # Registration screenshots are saved to ../registration-shots (RPL_SHOTS_DIR)
 DATABASE_URL='postgres://user:pw@localhost:5432/db' npm test   # same, against Postgres
 ```
 With `DATABASE_URL` set, each test run creates its own temporary schema (`rpl_test_xxxx`) and drops it afterwards. It never touches the real tables.

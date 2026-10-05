@@ -120,7 +120,7 @@ const stopServer = () => new Promise(r => { srv.once('exit', r); srv.kill(); });
   await stopServer(); await startServer();
   const live = await (await fetch(URL + '/api/live')).json();
   ok(live.result.text === 'Tigers won by 3 wickets' && live.mom.name === 'B3' && live.innings[0].runs === 23, 'data survives server restart');
-  await pub.waitForFunction(() => document.getElementById('conn').textContent.includes('Connected'), null, { timeout: 10000 });
+  await pub.waitForFunction(() => document.getElementById('conn').title === 'Connected', null, { timeout: 10000 });
   ok(true, 'public SSE reconnects after restart');
   await pub.click('[data-tab="past"]'); await pub.waitForSelector('[data-mid]');
   ok((await pub.textContent('#v-past')).includes('Lions 23/2 (2.0)'), 'past matches list');

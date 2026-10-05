@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Your RPL Registration</title><meta name="theme-color" content="#f59e0b"><meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="/"><img src="/logo-128.png" alt="RPL logo" width="42" height="42"><h1>RPL Registration<small>Rohidas Premier League · Box Cricket</small></h1></a>
+<div class="hdr-r"><a class="pill" href="/">🏏 Live</a></div></header>
+<div class="wrap">
+  <div id="loading" class="card mut">Loading...</div>
+  <div id="notFound" class="card hide"><h2>Registration not found</h2><div class="mut">This link is wrong or the registration was removed. Contact the RPL organisers.</div><div style="margin-top:8px"><a href="/register">Go to registration form</a></div></div>
+  <div id="main" class="hide">
+    <div id="celebrate" class="card hero hide"><div class="celebrate">🎉 Registration successful! 🎉</div><div style="text-align:center;margin-top:4px">Badhai ho! Your team is in. Save or share your card below.</div></div>
+    <div class="card">
+      <img id="cardImg" class="cardimg" alt="RPL thank you card" width="1080" height="1350">
+      <div class="btnrow" style="margin-top:10px">
+        <a class="big" id="dlBtn" style="text-align:center;text-decoration:none;display:block" download>⬇️ Download</a>
+        <button class="big sec" id="shareBtn" type="button">📤 Share</button>
+      </div>
+      <div class="mut" id="saveHint" style="margin-top:8px;text-align:center">iPhone: you can also long-press the image → <b>Save to Photos</b>. Android: long-press → <b>Download image</b>.</div>
+    </div>
+    <div class="card">
+      <h3>Your private link</h3>
+      <div class="mut">Save this link. Use it to see your registration again, download the card or upload payment later. Do not share it publicly.</div>
+      <div class="upi" style="margin-top:6px"><code id="link" style="font-size:13px"></code><button class="sbtn" id="copyLink" type="button">Copy link</button></div>
+    </div>
+    <div class="card" id="details"></div>
+    <div class="card hide" id="payCard">
+      <h3>Upload payment screenshot</h3>
+      <div id="payInfo"></div>
+      <label for="shot">Payment screenshot <span class="req">*</span></label>
+      <div class="filebox"><input id="shot" type="file" accept="image/*"><div class="mut">JPG / PNG, max 8 MB</div><img id="preview" class="preview hide" alt="Screenshot preview"></div>
+      <div class="ferr" id="shotErr"></div>
+      <label for="utr">UTR / Transaction ID (optional)</label><input id="utr" maxlength="30" autocomplete="off">
+      <div class="ferr" id="utrErr"></div>
+      <button class="big" id="payBtn" type="button">Upload screenshot</button>
+    </div>
+    <div class="mut" style="text-align:center;margin:12px 0 24px"><a href="/teams">All registered teams</a> · <a href="/">Live score</a></div>
+  </div>
+</div>
+<script src="/reg-common.js"></script>
+<script>
+const { $, esc, rupees, toast } = RC;
+const token = location.pathname.split('/')[2] || '';
+const base = '/registration/' + encodeURIComponent(token);
+let team = null, cardFile = null, shotFile = null;
+
+function render(t, s) {
+  team = t;
+  const pill = '<span class="pill st-' + esc(t.status) + '">' + esc(t.statusLabel) + '</span>';
+  $('details').innerHTML = '<div class="row tteam"><h2>' + esc(t.name) + '</h2>' + pill + '</div>' +
+    '<div class="kv" style="margin-top:8px"><b>Reg. No.</b><span>' + esc(t.regNo) + '</span><b>Season</b><span>' + esc(t.season) + ' (' + t.year + ')</span>' +
+    '<b>Captain</b><span>' + esc(t.captain) + '</span><b>Vice-captain</b><span>' + esc(t.vc) + '</span>' +
+    '<b>Players</b><span>' + t.count + ' (' + t.playing.length + ' playing + ' + t.subs.length + ' subs)</span>' +
+    (t.utr ? '<b>UTR</b><span>' + esc(t.utr) + '</span>' : '') + '</div>' +
+    '<h3>Playing XI</h3><ol class="list2">' + t.playing.map((p, i) => '<li>' + esc(p) + (i === 0 ? ' (C)' : i === 1 ? ' (VC)' : '') + '</li>').join('') + '</ol>' +
+    (t.subs.length ? '<h3>Substitutes (injury replacement)</h3><ol class="list2" start="' + (t.playing.length + 1) + '">' + t.subs.map(p => '<li>' + esc(p) + '</li>').join('') + '</ol>' : '') +
+    (t.status === 'uploaded' ? '<div class="mut">Payment screenshot received. Organisers will verify it soon.</div>' : '') +
+    (t.status === 'verified' ? '<div class="mut">✅ Payment verified. See you on the ground!</div>' : '') +
+    (t.status === 'rejected' ? '<div class="err">Payment could not be verified. Please upload the correct screenshot below or contact the organisers.</div>' : '');
+  const showPay = t.canUploadPayment && t.status !== 'uploaded';
+  $('payCard').classList.toggle('hide', !showPay);
+  if (showPay) {
+    let h = '';
+    if (t.fee) h += '<div class="fee">Entry fee: ' + rupees(t.fee) + '</div>';
+    if (s.upiId) h += '<div class="upi" style="margin-top:6px"><span class="mut">UPI ID:</span> <code>' + esc(s.upiId) + '</code></div>';
+    if (s.qr) h += '<div class="paybox"><img src="/api/reg/qr" alt="Payment QR code"></div>';
+    $('payInfo').innerHTML = h;
+  }
+}
+async function prepareShare() {
+  // fetch the card now, so Share can run straight from the tap (iPhone Safari needs that)
+  try {
+    const b = await (await fetch(base + '/card.png', { cache: 'no-store' })).blob();
+    cardFile = new File([b], fileName(), { type: 'image/png' });
+  } catch (e) { cardFile = null; }
+}
+const fileName = () => (team.regNo + '-' + team.name).replace(/[^A-Za-z0-9-]+/g, '-').slice(0, 60) + '.png';
+$('shareBtn').onclick = async () => {
+  const text = 'Hamari team ' + team.name + ' ne ' + team.season + ' ke liye register kar liya! 🏏🔥 #RPL';
+  try {
+    if (cardFile && navigator.canShare && navigator.canShare({ files: [cardFile] })) {
+      await navigator.share({ files: [cardFile], title: 'RPL ' + team.regNo, text });
+      return;
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  // fallback: share text (no file) or open WhatsApp, and tell how to save the image
+  $('saveHint').innerHTML = '<b>Your phone cannot share the image directly.</b> Tap <b>Download</b>, or long-press the image → Save, then send it on WhatsApp.';
+  $('saveHint').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  toast('Long-press the image to save it');
+};
+$('copyLink').onclick = () => RC.copy(location.origin + base);
+$('shot').addEventListener('change', async () => {
+  const f = $('shot').files[0]; shotFile = null; $('shotErr').textContent = ''; $('preview').classList.add('hide');
+  if (!f) return;
+  if (f.type && !/^image\//.test(f.type)) { $('shotErr').textContent = 'Only image files are allowed'; $('shot').value = ''; return; }
+  shotFile = await RC.shrinkImage(f);
+  if (shotFile.size > 8 * 1024 * 1024) { $('shotErr').textContent = 'Image is too big (max 8 MB)'; shotFile = null; return; }
+  $('preview').src = URL.createObjectURL(shotFile); $('preview').classList.remove('hide');
+});
+$('payBtn').onclick = async () => {
+  $('shotErr').textContent = ''; $('utrErr').textContent = '';
+  if (!shotFile) { $('shotErr').textContent = 'Please choose the payment screenshot'; return; }
+  const fd = new FormData(); fd.append('utr', $('utr').value); fd.append('screenshot', shotFile, shotFile.name || 'screenshot.jpg');
+  $('payBtn').disabled = true; $('payBtn').textContent = 'Uploading...';
+  try {
+    const r = await RC.postForm('/api/reg/t/' + encodeURIComponent(token) + '/payment', fd);
+    render(r.team, {}); toast('Screenshot uploaded. Thank you!');
+  } catch (e) {
+    const er = (e.body && e.body.errors) || {};
+    $('shotErr').textContent = er.screenshot || (er.utr ? '' : e.message); $('utrErr').textContent = er.utr || '';
+  } finally { $('payBtn').disabled = false; $('payBtn').textContent = 'Upload screenshot'; }
+};
+(async function boot() {
+  let r;
+  try { r = await RC.getJSON('/api/reg/t/' + encodeURIComponent(token)); }
+  catch (e) { $('loading').classList.add('hide'); if (e.status === 404) $('notFound').classList.remove('hide'); else { $('loading').textContent = 'Could not load. Check internet and refresh.'; $('loading').classList.remove('hide'); } return; }
+  $('loading').classList.add('hide'); $('main').classList.remove('hide');
+  if (new URLSearchParams(location.search).has('new')) { $('celebrate').classList.remove('hide'); history.replaceState(null, '', base); }
+  render(r.team, r.settings);
+  $('cardImg').src = base + '/card.png';
+  $('dlBtn').href = base + '/card.png?download=1';
+  $('dlBtn').setAttribute('download', fileName());
+  $('link').textContent = location.origin + base;
+  RC.remember({ token, regNo: r.team.regNo, team: r.team.name, when: Date.now() });
+  prepareShare();
+})();
+</script>
+</body></html>
