@@ -59,6 +59,25 @@ window.RC = (function () {
       list.unshift(entry); localStorage.setItem('rpl_regs', JSON.stringify(list.slice(0, 10)));
     } catch (e) { /* private mode */ }
   }
-  function remembered() { try { return JSON.parse(localStorage.getItem('rpl_regs') || '[]'); } catch (e) { return []; } }
-  return { esc, $, rupees, toast, getJSON, postForm, shrinkImage, copy, remember, remembered };
+  function remembered() { try { const l = JSON.parse(localStorage.getItem('rpl_regs') || '[]'); return Array.isArray(l) ? l.filter(x => x && typeof x.token === 'string') : []; } catch (e) { return []; } }
+  function saveRemembered(list) { try { if (list.length) localStorage.setItem('rpl_regs', JSON.stringify(list.slice(0, 10))); else localStorage.removeItem('rpl_regs'); } catch (e) { /* private mode */ } }
+  function forget(token) { saveRemembered(remembered().filter(x => x.token !== token)); }
+  // Ask the server which remembered registrations still exist; drop the deleted ones from this phone.
+  // On a network error the saved list is returned unchanged (never drop on a failed check).
+  async function verifiedRemembered() {
+    const mine = remembered();
+    if (!mine.length) return mine;
+    let r;
+    try {
+      const res = await fetch('/api/reg/mine', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tokens: mine.map(m => m.token) }) });
+      if (!res.ok) return mine;
+      r = await res.json();
+    } catch (e) { return mine; }
+    if (!r || !Array.isArray(r.regs)) return mine;
+    const live = new Map(r.regs.map(x => [x.token, x]));
+    const next = mine.filter(m => live.has(m.token)).map(m => ({ ...m, regNo: live.get(m.token).regNo, team: live.get(m.token).team }));
+    saveRemembered(next);
+    return next;
+  }
+  return { esc, $, rupees, toast, getJSON, postForm, shrinkImage, copy, remember, remembered, forget, verifiedRemembered };
 })();

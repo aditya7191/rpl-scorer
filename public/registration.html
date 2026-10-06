@@ -9,7 +9,7 @@
 <div class="hdr-r"><a class="pill" href="/">🏠 Home</a></div></header>
 <div class="wrap">
   <div id="loading" class="card mut">Loading...</div>
-  <div id="notFound" class="card hide"><h2>Registration not found</h2><div class="mut">This link is wrong or the registration was removed. Contact the RPL organisers.</div><div style="margin-top:8px"><a href="/register">Go to registration form</a></div></div>
+  <div id="notFound" class="card hide"><h2 id="nfTitle">Registration not found</h2><div class="mut" id="nfText">This link is wrong or the registration was removed. Contact the RPL organisers.</div><div style="margin-top:8px"><a href="/register">Go to registration form</a></div></div>
   <div id="main" class="hide">
     <div id="celebrate" class="card hero hide"><div class="celebrate">🎉 Registration successful! 🎉</div><div style="text-align:center;margin-top:4px">Badhai ho! Your team is in. Save or share your card below.</div></div>
     <div class="card">
@@ -116,7 +116,17 @@ $('payBtn').onclick = async () => {
 (async function boot() {
   let r;
   try { r = await RC.getJSON('/api/reg/t/' + encodeURIComponent(token)); }
-  catch (e) { $('loading').classList.add('hide'); if (e.status === 404) $('notFound').classList.remove('hide'); else { $('loading').textContent = 'Could not load. Check internet and refresh.'; $('loading').classList.remove('hide'); } return; }
+  catch (e) {
+    $('loading').classList.add('hide');
+    if (e.status === 404) {
+      // this phone saved the link earlier, so it was a real registration that has since been deleted
+      if (RC.remembered().some(x => x.token === token)) {
+        $('nfTitle').textContent = 'This registration was deleted';
+        $('nfText').textContent = 'The RPL organisers removed this registration. If this is a mistake, contact them or register again.';
+        RC.forget(token);
+      }
+      $('notFound').classList.remove('hide');
+    } else { $('loading').textContent = 'Could not load. Check internet and refresh.'; $('loading').classList.remove('hide'); } return; }
   $('loading').classList.add('hide'); $('main').classList.remove('hide');
   if (new URLSearchParams(location.search).has('new')) { $('celebrate').classList.remove('hide'); history.replaceState(null, '', base); }
   render(r.team, r.settings);

@@ -142,7 +142,7 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   const det = await p.textContent('#details');
   ok(det.includes('Screenshot uploaded') && det.includes('Playing XI') && det.includes('Substitutes') && !det.includes('9820012345') && !(await p.isVisible('#celebrate')), label + ': private link re-opens: details, no mobile numbers');
   // duplicate team name
-  await p.goto(URL + '/register'); await p.waitForSelector('#f:not(.hide)');
+  await p.goto(URL + '/register'); await p.waitForSelector('#f:not(.hide)'); await p.waitForSelector('#mine:not(.hide)');
   ok(await p.isVisible('#mine') && (await p.textContent('#mine')).includes(sub.regNo), label + ': form remembers registration on this phone');
   await fillForm(p, '  ' + TN.toUpperCase().replace(' ', '   ') + ' ', { pay: 'no' });
   const [r2] = await Promise.all([p.waitForResponse(r => r.url().endsWith('/api/reg/submit')), clickSubmit(p)]);
@@ -223,10 +223,36 @@ async function publicFlow(browser, label, ctxOpts, shotFile) {
   ok((await a.textContent('#sheet')).includes('cannot be undone'), 'delete asks for confirmation');
   await a.click('text=No, keep it');
   ok((await a.$$('#tList [data-tid]')).length === n, 'cancel keeps team');
+  const allTeams = () => a.evaluate(async () => (await (await fetch('/api/admin/reg/teams?year=all', { cache: 'no-store' })).json()).teams);
+  const before = await allTeams();
   await a.click('[data-ra="askdel"]');
   await Promise.all([a.waitForResponse(r => r.request().method() === 'DELETE' && r.status() === 200), a.click('[data-ra="delok"]')]);
   await a.waitForFunction((k) => document.querySelectorAll('#tList [data-tid]').length === k, n - 1);
   ok(true, 'team deleted after confirm');
+  // regression: the phone that registered the deleted team still has it in localStorage.
+  // /register must drop it from the "Already registered from this phone" banner, and its private link must say it was deleted.
+  const after = await allTeams();
+  const gone = before.find(t => !after.some(x => x.id === t.id)), live = after.find(t => t.name === 'Rohidas Royals');
+  ok(gone && live && !after.some(t => t.name === gone.name), 'deleted team is gone from admin list (all years)');
+  const phone = await chrome.newContext(android); const ph = await phone.newPage();
+  const pErrs = []; ph.on('pageerror', e => pErrs.push(e.message));
+  await ph.goto(URL + '/teams');
+  await ph.evaluate((list) => localStorage.setItem('rpl_regs', JSON.stringify(list)), [
+    { token: gone.token, regNo: gone.regNo, team: gone.name, when: 1 }, { token: live.token, regNo: live.regNo, team: 'Old Name', when: 2 }]);
+  await ph.goto(URL + '/register'); await ph.waitForSelector('#mine:not(.hide)');
+  await ph.waitForFunction(() => !JSON.parse(localStorage.getItem('rpl_regs') || '[]').some(x => x.team === 'Old Name'));
+  const mineTxt = await ph.textContent('#mine');
+  const stored = await ph.evaluate(() => JSON.parse(localStorage.getItem('rpl_regs') || '[]'));
+  ok(mineTxt.includes('Rohidas Royals') && !mineTxt.includes(gone.name) && !mineTxt.includes(gone.regNo + ' ') && stored.length === 1 && stored[0].token === live.token,
+    'register banner: deleted team removed (banner + localStorage), live team kept with current name');
+  await ph.evaluate((t) => localStorage.setItem('rpl_regs', JSON.stringify([{ token: t.token, regNo: t.regNo, team: t.name, when: 1 }])), gone);
+  await ph.goto(URL + '/registration/' + gone.token); await ph.waitForSelector('#notFound:not(.hide)');
+  ok((await ph.textContent('#notFound')).includes('This registration was deleted') && (await ph.evaluate(() => localStorage.getItem('rpl_regs'))) === null, 'private link of deleted team: "This registration was deleted" + forgotten on this phone');
+  await ph.evaluate(() => localStorage.removeItem('rpl_regs'));
+  await ph.goto(URL + '/register'); await ph.waitForSelector('#f:not(.hide)'); await ph.waitForTimeout(300);
+  ok(!(await ph.isVisible('#mine')), 'register banner hidden when nothing remembered');
+  ok(pErrs.length === 0, 'phone: no JS errors ' + pErrs.join('; '));
+  await phone.close();
   // CSV export
   const [csvDl] = await Promise.all([a.waitForEvent('download'), a.click('#csvBtn')]);
   const csvPath = path.join(os.tmpdir(), 'rpl-teams.csv'); await csvDl.saveAs(csvPath);

@@ -172,6 +172,16 @@ const submit = (data, file, f, t) => req('/api/reg/submit', { body: form(data, f
   ok(r.status === 200, 'admin deletes team');
   ok((await req('/api/reg/t/' + tok2)).status === 404 && (await req('/api/admin/reg/teams/' + id2 + '/screenshot')).status === 404, 'deleted team: private link + screenshot gone');
   ok((await req('/api/admin/reg/teams/' + id2, { method: 'DELETE', json: {} })).status === 404, 'delete again -> 404');
+  // regression: phones remember registrations; the deleted one must be reported gone so the banner drops it
+  r = await req('/api/reg/mine', { json: { tokens: [tok1, tok2, 'x'.repeat(24), 42] }, auth: false });
+  ok(r.status === 200 && r.body.regs.length === 1 && r.body.regs[0].token === tok1 && r.body.regs[0].regNo === 'RPL7-001' && r.body.gone.includes(tok2), '/api/reg/mine: deleted team reported gone, live team kept');
+  ok(r.headers.get('cache-control') === 'no-store', '/api/reg/mine: Cache-Control no-store');
+  ok((await req('/api/reg/mine', { json: { tokens: 'nope' }, auth: false })).status === 400, '/api/reg/mine: bad body -> 400');
+  r = await req('/api/admin/reg/teams?year=all');
+  ok(!r.body.teams.some(t => t.id === id2) && r.headers.get('cache-control') === 'no-store', 'admin list (all years) no longer has deleted team, no-store');
+  r = await req('/api/reg/teams?year=2026', { auth: false });
+  ok(!r.body.teams.some(t => t.name === 'Second Eleven') && r.headers.get('cache-control') === 'no-store', 'public team list no longer has deleted team, no-store');
+  ok((await req('/api/reg/years', { auth: false })).headers.get('cache-control') === 'no-store' && (await req('/api/reg/t/' + tok1, { auth: false })).headers.get('cache-control') === 'no-store', 'years + private API: no-store');
   if (H.usePg) {
     const rows = await H.pgQuery(`SELECT (SELECT count(*)::int FROM "${schema}".rpl_teams) AS t, (SELECT count(*)::int FROM "${schema}".rpl_images) AS i`);
     ok(rows[0].t === 3 && rows[0].i === 2, 'Postgres: 3 team rows, 2 images (team 1 screenshot + QR) after delete');

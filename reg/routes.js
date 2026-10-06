@@ -93,6 +93,8 @@ function createRegistration({ store, isAdmin, requireAdmin, env = process.env })
   }
 
   function mount(app) {
+    // registration data changes (admin edits/deletes): never let a browser or proxy reuse an old API response
+    app.use(['/api/reg', '/api/admin/reg'], (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
     const page = (file, extra) => (req, res) => { if (extra) extra(res); res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(PUB, file)); };
     app.get('/register', page('register.html'));
     app.get('/teams', page('teams.html'));
@@ -145,6 +147,20 @@ function createRegistration({ store, isAdmin, requireAdmin, env = process.env })
       const t = TOKEN_RE.test(req.params.token) && byToken(req.params.token);
       if (!t) return res.status(404).json({ error: 'Registration not found' });
       res.json({ team: privateTeam(t), settings: V.publicSettings(st.settings) });
+    });
+
+    // Phones remember their registrations in localStorage. The form page asks which of those still exist,
+    // so a team deleted by the admin disappears from the "Already registered from this phone" banner.
+    app.post('/api/reg/mine', rate(lookupLimit), (req, res) => {
+      const tokens = Array.isArray(req.body && req.body.tokens) ? req.body.tokens.slice(0, 20) : null;
+      if (!tokens) return res.status(400).json({ error: 'Bad request' });
+      const regs = [], gone = [];
+      for (const tk of tokens) {
+        if (typeof tk !== 'string') continue;
+        const t = TOKEN_RE.test(tk) && byToken(tk);
+        if (t) regs.push({ token: tk, regNo: t.regNo, team: t.name, year: t.year }); else gone.push(tk);
+      }
+      res.json({ regs, gone });
     });
 
     // ---- public submit ----

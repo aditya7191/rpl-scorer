@@ -245,11 +245,12 @@ $('f').addEventListener('submit', async (ev) => {
 });
 
 (async function boot() {
-  const mine = RC.remembered();
-  if (mine.length) {
+  // show only registrations that still exist on the server (admin may have deleted some)
+  RC.verifiedRemembered().then(mine => {
+    if (!mine.length) { $('mine').classList.add('hide'); $('mine').innerHTML = ''; return; }
     $('mine').innerHTML = '<b>Already registered from this phone:</b>' + mine.map(m => '<div><a href="/registration/' + encodeURIComponent(m.token) + '">' + esc(m.regNo) + ' · ' + esc(m.team) + '</a></div>').join('');
     $('mine').classList.remove('hide');
-  }
+  });
   try { cfg = await RC.getJSON('/api/reg/config'); }
   catch (e) { $('loading').textContent = 'Could not load. Check internet and refresh.'; return; }
   $('loading').classList.add('hide');
